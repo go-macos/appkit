@@ -226,6 +226,8 @@ type impl interface {
 	boolValue() bool
 	setBool(on bool)
 	setItems(items []string)
+	setMenu(items []MenuItem)
+	menuCount() int
 	columnsEditable() bool
 	release()
 }
@@ -260,6 +262,23 @@ func dispatchAction(tag uint64) {
 		return
 	}
 	if fn := c.action(); fn != nil {
+		fn()
+	}
+}
+
+// menuPicks is what each menu item does, keyed the way controls are: AppKit
+// hands back a tag, and a Go func has to be found from it.
+var (
+	menuMu    sync.Mutex
+	menuPicks = map[uint64]func(){}
+)
+
+// dispatchMenu is called by the AppKit target when a menu item is chosen.
+func dispatchMenu(tag uint64) {
+	menuMu.Lock()
+	fn := menuPicks[tag]
+	menuMu.Unlock()
+	if fn != nil {
 		fn()
 	}
 }
@@ -541,6 +560,42 @@ func (c *Control) columnsAreEditable() bool {
 	editable := false
 	_ = c.withImpl(func(i impl) { editable = i.columnsEditable() })
 	return editable
+}
+
+// MenuItem is one line of a control's context menu.
+//
+// An empty Title is a separator: a menu is a list of verbs with rules between
+// the groups, and giving the rule its own type would make every caller name
+// something that has no name.
+type MenuItem struct {
+	Title string
+	// OnPick runs when the item is chosen. Nil makes the item inert, which is
+	// how a menu shows a verb that does not apply right now rather than hiding
+	// it and moving everything else.
+	OnPick func()
+}
+
+// SetMenu gives a control the menu it shows on a right-click (or a Control
+// click, or the trackpad's secondary gesture -- the system decides, which is
+// the point of asking it).
+//
+// Buttons along the bottom of a window are a dialogue's shape: a fixed row of
+// verbs that must all fit, all the time, whether or not any of them applies to
+// what is selected. A context menu is the other shape -- the verbs that apply
+// to THIS row, where the row is, named in full rather than abbreviated to fit.
+//
+// Passing no items removes the menu.
+func (c *Control) SetMenu(items []MenuItem) error {
+	return c.withImpl(func(i impl) { i.setMenu(items) })
+}
+
+// menuItemCount is how many items the live menu holds, for the live test: a
+// menu built against a misspelt selector is silently empty, which looks
+// exactly like a menu nobody opened.
+func (c *Control) menuItemCount() int {
+	n := 0
+	_ = c.withImpl(func(i impl) { n = i.menuCount() })
+	return n
 }
 
 // OnAction registers the handler called when the control fires its primary

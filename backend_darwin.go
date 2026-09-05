@@ -137,6 +137,16 @@ var (
 					},
 				},
 				{
+					// A menu item was chosen. Menu items carry their own tags,
+					// in their own table: a menu is not a control, and giving
+					// it one would mean an item and a button could collide on
+					// a number.
+					Cmd: objc.Sel("goMenuPick:"),
+					Fn: func(_ objc.ID, _ objc.SEL, sender objc.ID) {
+						dispatchMenu(uint64(sender.Send(selTag)))
+					},
+				},
+				{
 					// NSTextView editing: the object is the text view, which
 					// carries no tag, so map it through textTags.
 					Cmd: selChangeText,
@@ -212,10 +222,13 @@ func ensureTarget() error {
 //   - fmtr is the retained NSDateFormatter a DatePicker uses to turn its NSDate
 //     into a YYYY-MM-DD string and back; it is 0 for every other kind.
 type nativeControl struct {
-	view      objc.ID
-	value     objc.ID
-	kind      Kind
-	fmtr      objc.ID
+	view  objc.ID
+	value objc.ID
+	kind  Kind
+	fmtr  objc.ID
+	// menuTags are this control's menu items, so their handlers can be
+	// forgotten when the menu is replaced or the control closed.
+	menuTags  []uint64
 	animating bool
 }
 
@@ -560,6 +573,7 @@ func (n *nativeControl) setDouble(v float64) {
 // release frees the native object. A TextView is dropped from textTags first; a
 // DatePicker's retained formatter is released too.
 func (n *nativeControl) release() {
+	n.dropMenu()
 	if n.kind == TableView {
 		tableRowsMu.Lock()
 		delete(tableRows, uintptr(n.value))
@@ -639,6 +653,79 @@ func (n *nativeControl) columnsEditable() bool {
 		}
 	}
 	return false
+}
+
+// setMenu builds an NSMenu and hangs it off the control's view.
+//
+// The items are retained by the menu, and the menu by the view, so nothing
+// here is released early. The Go funcs live in menuPicks until the control is
+// closed -- a menu item that outlived its handler would be a line that looks
+// like a verb and does nothing.
+func (n *nativeControl) setMenu(items []MenuItem) {
+	n.dropMenu()
+	if len(items) == 0 {
+		n.view.Send(objc.Sel("setMenu:"), objc.ID(0))
+		return
+	}
+	menu := newObject("NSMenu")
+	if menu == 0 {
+		return
+	}
+	// The table's own rows must stay selectable while the menu is up.
+	menu.Send(objc.Sel("setAutoenablesItems:"), false)
+	for _, it := range items {
+		var item objc.ID
+		if it.Title == "" {
+			item = objc.ClassID("NSMenuItem").Send(objc.Sel("separatorItem"))
+			if item == 0 {
+				continue
+			}
+			menu.Send(objc.Sel("addItem:"), item)
+			continue
+		}
+		item = newObject("NSMenuItem")
+		if item == 0 {
+			continue
+		}
+		item.Send(objc.Sel("setTitle:"), objc.NSString(it.Title))
+		item.Send(objc.Sel("setEnabled:"), it.OnPick != nil)
+		if it.OnPick != nil {
+			tag := tagSeq.Add(1)
+			menuMu.Lock()
+			menuPicks[tag] = it.OnPick
+			menuMu.Unlock()
+			n.menuTags = append(n.menuTags, tag)
+			item.Send(objc.Sel("setTag:"), int(tag))
+			item.Send(objc.Sel("setTarget:"), target)
+			item.Send(objc.Sel("setAction:"), objc.Sel("goMenuPick:"))
+		}
+		menu.Send(objc.Sel("addItem:"), item)
+		item.Send(objc.Sel("release")) // the menu owns it now
+	}
+	n.view.Send(objc.Sel("setMenu:"), menu)
+	menu.Send(objc.Sel("release")) // the view owns it now
+}
+
+// dropMenu forgets the handlers of a menu being replaced.
+func (n *nativeControl) dropMenu() {
+	if len(n.menuTags) == 0 {
+		return
+	}
+	menuMu.Lock()
+	for _, t := range n.menuTags {
+		delete(menuPicks, t)
+	}
+	menuMu.Unlock()
+	n.menuTags = nil
+}
+
+// menuCount is how many items the live menu holds.
+func (n *nativeControl) menuCount() int {
+	m := n.view.Send(objc.Sel("menu"))
+	if m == 0 {
+		return 0
+	}
+	return objc.Send[int](m, objc.Sel("numberOfItems"))
 }
 
 func (n *nativeControl) setBool(on bool) {
