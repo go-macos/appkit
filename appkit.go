@@ -58,6 +58,46 @@ const (
 	// selected title is [Control.StringValue]; its action fires on selection.
 	PopUpButton
 
+	// ProgressIndicator is a determinate NSProgressIndicator (a bar). Its value
+	// is [Control.Double], clamped to the [Spec.Min],[Spec.Max] range fixed at
+	// construction. It is read-only: it has no action, because a progress bar
+	// reports, it is not operated.
+	ProgressIndicator
+	// Spinner is an indeterminate, spinning NSProgressIndicator. It carries no
+	// value; [Control.SetBool] starts (true) and stops (false) its animation.
+	Spinner
+	// Stepper is an NSStepper over [Spec.Min],[Spec.Max] starting at
+	// [Spec.Value]. Its value is [Control.Double]; its action fires on each step.
+	Stepper
+	// SearchField is an NSSearchField: an editable field styled for search. Its
+	// text is [Control.StringValue]; OnChange fires on every keystroke and its
+	// action fires on Return.
+	SearchField
+	// ComboBox is an editable NSComboBox: a text field with a drop-down list of
+	// [Spec.Items]. The typed-or-picked text is [Control.StringValue]; OnChange
+	// fires on a keystroke, its action on Return or a pick.
+	ComboBox
+	// SegmentedControl is an NSSegmentedControl over [Spec.Items]. The selected
+	// segment's label is [Control.StringValue] (the binding maps label to index);
+	// its action fires when the selection changes.
+	SegmentedControl
+	// TextView is a multi-line, editable NSTextView (inside an NSScrollView). Its
+	// text is [Control.StringValue]; OnChange fires as it is edited. It has no
+	// action.
+	TextView
+	// LinkButton is an NSButton styled as a hyperlink. Its title is
+	// [Control.StringValue]; its action fires when it is clicked, which is where
+	// a host opens the link.
+	LinkButton
+	// DatePicker is an NSDatePicker. Its value is [Control.StringValue] as an
+	// ISO-8601 YYYY-MM-DD date string (the binding parses and formats at the
+	// boundary); its action fires when the date changes.
+	DatePicker
+	// ColorWell is an NSColorWell. Its value is [Control.StringValue] as a
+	// #RRGGBB hex string (the binding converts to and from NSColor); its action
+	// fires when the colour changes.
+	ColorWell
+
 	// kindCount bounds validation. Keep it last.
 	kindCount
 )
@@ -83,6 +123,26 @@ func (k Kind) String() string {
 		return "Slider"
 	case PopUpButton:
 		return "PopUpButton"
+	case ProgressIndicator:
+		return "ProgressIndicator"
+	case Spinner:
+		return "Spinner"
+	case Stepper:
+		return "Stepper"
+	case SearchField:
+		return "SearchField"
+	case ComboBox:
+		return "ComboBox"
+	case SegmentedControl:
+		return "SegmentedControl"
+	case TextView:
+		return "TextView"
+	case LinkButton:
+		return "LinkButton"
+	case DatePicker:
+		return "DatePicker"
+	case ColorWell:
+		return "ColorWell"
 	default:
 		return fmt.Sprintf("Kind(%d)", int(k))
 	}
@@ -95,18 +155,22 @@ func (k Kind) String() string {
 type Spec struct {
 	Kind Kind
 
-	// Title is the label of a Button, Checkbox or RadioButton, and the initial
-	// text of a Label, TextField or SecureTextField. It is ignored for Switch,
-	// Slider and PopUpButton.
+	// Title is the label of a Button, Checkbox or RadioButton, the initial text
+	// of a Label, TextField, SecureTextField, SearchField or TextView, and the
+	// title of a LinkButton. It is ignored for the valueless controls (Switch,
+	// Slider, PopUpButton, and the rest).
 	Title string
 
-	// Items are the entries of a PopUpButton, top to bottom. Ignored otherwise.
-	// A PopUpButton with no items is refused: an empty pop-up is a control that
-	// cannot be operated.
+	// Items are the entries of a PopUpButton or ComboBox drop-down, or the
+	// segments of a SegmentedControl, in order. A PopUpButton or SegmentedControl
+	// with no items is refused: neither can be operated empty. A ComboBox may be
+	// empty — it is still a typeable text field.
 	Items []string
 
-	// Min, Max and Value are the bounds and initial position of a Slider.
-	// Min must be < Max. Value is clamped into the range. Ignored otherwise.
+	// Min, Max and Value are the bounds and initial position of a Slider or
+	// Stepper, and the bounds of a ProgressIndicator (whose initial value is
+	// Min). Min must be < Max. Value is clamped into the range. Ignored
+	// otherwise.
 	Min, Max, Value float64
 }
 
@@ -117,8 +181,11 @@ func (s Spec) validate() error {
 	if s.Kind == PopUpButton && len(s.Items) == 0 {
 		return errors.New("appkit: a PopUpButton needs at least one item")
 	}
-	if s.Kind == Slider && !(s.Min < s.Max) {
-		return fmt.Errorf("appkit: slider needs Min < Max, got Min=%g Max=%g", s.Min, s.Max)
+	if s.Kind == SegmentedControl && len(s.Items) == 0 {
+		return errors.New("appkit: a SegmentedControl needs at least one item")
+	}
+	if (s.Kind == Slider || s.Kind == Stepper || s.Kind == ProgressIndicator) && !(s.Min < s.Max) {
+		return fmt.Errorf("appkit: %s needs Min < Max, got Min=%g Max=%g", s.Kind, s.Min, s.Max)
 	}
 	return nil
 }
@@ -280,6 +347,72 @@ func NewSlider(min, max, value float64) (*Control, error) {
 // NewPopUpButton makes a pop-up list of the given items.
 func NewPopUpButton(items []string) (*Control, error) {
 	return New(Spec{Kind: PopUpButton, Items: items})
+}
+
+// NewProgressIndicator makes a determinate progress bar over [min,max],
+// starting at min. Its value is read and written with [Control.Double]; it has
+// no action.
+func NewProgressIndicator(min, max float64) (*Control, error) {
+	return New(Spec{Kind: ProgressIndicator, Min: min, Max: max, Value: min})
+}
+
+// NewSpinner makes an indeterminate spinning progress indicator.
+// [Control.SetBool](true) starts its animation and (false) stops it.
+func NewSpinner() (*Control, error) {
+	return New(Spec{Kind: Spinner})
+}
+
+// NewStepper makes a stepper over [min,max] starting at value. Its value is
+// [Control.Double]; [Control.OnAction] fires on each step.
+func NewStepper(min, max, value float64) (*Control, error) {
+	return New(Spec{Kind: Stepper, Min: min, Max: max, Value: value})
+}
+
+// NewSearchField makes a search field with the given initial text. Its text is
+// [Control.StringValue]; [Control.OnChange] fires on every keystroke and
+// [Control.OnAction] on Return.
+func NewSearchField(text string) (*Control, error) {
+	return New(Spec{Kind: SearchField, Title: text})
+}
+
+// NewComboBox makes an editable combo box with the given drop-down items. The
+// typed-or-picked text is [Control.StringValue]; [Control.OnChange] fires on a
+// keystroke, [Control.OnAction] on Return or a pick.
+func NewComboBox(items []string) (*Control, error) {
+	return New(Spec{Kind: ComboBox, Items: items})
+}
+
+// NewSegmentedControl makes a segmented control with the given segment labels.
+// The selected segment's label is [Control.StringValue]; [Control.OnAction]
+// fires when the selection changes.
+func NewSegmentedControl(items []string) (*Control, error) {
+	return New(Spec{Kind: SegmentedControl, Items: items})
+}
+
+// NewTextView makes a multi-line, editable text view with the given initial
+// text. Its text is [Control.StringValue]; [Control.OnChange] fires as it is
+// edited.
+func NewTextView(text string) (*Control, error) {
+	return New(Spec{Kind: TextView, Title: text})
+}
+
+// NewLinkButton makes a hyperlink-styled button with the given title. Its title
+// is [Control.StringValue]; [Control.OnAction] fires when it is clicked.
+func NewLinkButton(text string) (*Control, error) {
+	return New(Spec{Kind: LinkButton, Title: text})
+}
+
+// NewDatePicker makes a date picker. Its value is [Control.StringValue] as an
+// ISO-8601 YYYY-MM-DD string; [Control.OnAction] fires when the date changes.
+func NewDatePicker() (*Control, error) {
+	return New(Spec{Kind: DatePicker})
+}
+
+// NewColorWell makes a colour well. Its value is [Control.StringValue] as a
+// #RRGGBB hex string; [Control.OnAction] (and [Control.OnChange]) fire when the
+// colour changes.
+func NewColorWell() (*Control, error) {
+	return New(Spec{Kind: ColorWell})
 }
 
 // Kind reports which control this is.
