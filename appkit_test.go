@@ -40,6 +40,7 @@ func (f *fakeImpl) setDouble(v float64)         { f.dbl = v }
 func (f *fakeImpl) boolValue() bool             { return f.bl }
 func (f *fakeImpl) setBool(on bool)             { f.bl = on }
 func (f *fakeImpl) setItems(items []string)     { f.items = append([]string(nil), items...) }
+func (f *fakeImpl) columnsEditable() bool       { return false }
 func (f *fakeImpl) release()                    { f.released = true }
 
 // fakeCreate installs a create seam that hands out a fresh *fakeImpl for every
@@ -350,5 +351,27 @@ func TestSetItemsReachesTheControl(t *testing.T) {
 	c.Close()
 	if err := c.SetItems([]string{"x"}); err == nil {
 		t.Error("SetItems on a closed control reported success")
+	}
+}
+
+// TestAListIsReadNotTypedInto covers the answer every list this package builds
+// must give.
+//
+// A cell-based NSTableView hands each row an editable NSTextFieldCell unless
+// its column says otherwise, so clicking a row opened a text field over it —
+// as though a list of downloads were something a person types into.
+func TestAListIsReadNotTypedInto(t *testing.T) {
+	fakeCreate(t)
+	c, err := NewTableView([]string{"un", "deux"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.columnsAreEditable() {
+		t.Error("a list reports itself editable")
+	}
+	// A closed control has nothing to ask, and answers no rather than panics.
+	c.Close()
+	if c.columnsAreEditable() {
+		t.Error("a closed control reported an editable column")
 	}
 }

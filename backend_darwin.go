@@ -623,6 +623,24 @@ func (n *nativeControl) selectRow(row int) {
 	n.value.Send(objc.Sel("scrollRowToVisible:"), row)
 }
 
+// columnsEditable asks the live table whether any of its columns is editable.
+func (n *nativeControl) columnsEditable() bool {
+	if n.kind != TableView {
+		return false
+	}
+	cols := n.value.Send(objc.Sel("tableColumns"))
+	if cols == 0 {
+		return false
+	}
+	for i, count := 0, objc.Send[int](cols, objc.Sel("count")); i < count; i++ {
+		c := cols.Send(objc.Sel("objectAtIndex:"), i)
+		if c != 0 && objc.Send[bool](c, objc.Sel("isEditable")) {
+			return true
+		}
+	}
+	return false
+}
+
 func (n *nativeControl) setBool(on bool) {
 	if n.kind == Spinner {
 		n.animating = on
@@ -775,11 +793,20 @@ func makeTableView(items []string) (objc.ID, objc.ID) {
 		return 0, 0
 	}
 	col.Send(objc.Sel("setIdentifier:"), objc.NSString("row"))
+	// NOT editable. A cell-based NSTableView hands each row an NSTextFieldCell,
+	// and that cell is editable unless its column says otherwise: clicking a
+	// row opened a text field over it, as though a list of downloads were
+	// something a person types into. Reported as "the line looks editable",
+	// which is exactly what it was.
+	col.Send(objc.Sel("setEditable:"), false)
 	tv.Send(objc.Sel("addTableColumn:"), col)
 	col.Send(objc.Sel("release")) // the table owns it now
 	tv.Send(objc.Sel("setHeaderView:"), objc.ID(0))
 	tv.Send(objc.Sel("setUsesAlternatingRowBackgroundColors:"), true)
 	tv.Send(objc.Sel("setAllowsMultipleSelection:"), false)
+	// A column nobody can select either: this is a list of one column, and
+	// selecting the column is a gesture with nothing behind it.
+	tv.Send(objc.Sel("setAllowsColumnSelection:"), false)
 
 	tableRowsMu.Lock()
 	tableRows[uintptr(tv)] = append([]string(nil), items...)

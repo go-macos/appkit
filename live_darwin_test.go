@@ -113,6 +113,12 @@ func runLiveSmoke() error {
 	if got := tbl.Double(); got != 0 {
 		return fmt.Errorf("selecting the only row gave %v, want 0", got)
 	}
+	// A list is READ, not typed into. A cell-based NSTableView hands each row
+	// an editable NSTextFieldCell unless its column says otherwise, and
+	// clicking a row then opened a text field over it.
+	if cols := tbl.columnsAreEditable(); cols {
+		return fmt.Errorf("the table's column is editable, so clicking a row opens a field")
+	}
 	// A row that does not exist clears the selection instead of pretending.
 	if err := tbl.SetDouble(9); err != nil {
 		return err

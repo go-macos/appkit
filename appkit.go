@@ -226,6 +226,7 @@ type impl interface {
 	boolValue() bool
 	setBool(on bool)
 	setItems(items []string)
+	columnsEditable() bool
 	release()
 }
 
@@ -530,6 +531,16 @@ func (c *Control) Bool() bool {
 // queue this was built for gains and loses entries while the window is open.
 func (c *Control) SetItems(items []string) error {
 	return c.withImpl(func(i impl) { i.setItems(items) })
+}
+
+// columnsAreEditable reports whether any column of a TableView would let a
+// person type into a row. It is false for every list this package builds, and
+// exists so a test can say so against real AppKit rather than trusting the
+// selector was sent.
+func (c *Control) columnsAreEditable() bool {
+	editable := false
+	_ = c.withImpl(func(i impl) { editable = i.columnsEditable() })
+	return editable
 }
 
 // OnAction registers the handler called when the control fires its primary
