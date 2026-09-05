@@ -119,6 +119,26 @@ func runLiveSmoke() error {
 	if cols := tbl.columnsAreEditable(); cols {
 		return fmt.Errorf("the table's column is editable, so clicking a row opens a field")
 	}
+	// A real NSMenu, hung off the real table. What this checks is that the
+	// selectors exist and the objects take them: a menu built against a
+	// misspelt selector is silently empty, which looks exactly like a menu
+	// nobody opened.
+	if err := tbl.SetMenu([]MenuItem{
+		{Title: "Retry", OnPick: func() {}},
+		{},
+		{Title: "Remove"},
+	}); err != nil {
+		return fmt.Errorf("SetMenu: %w", err)
+	}
+	if n := tbl.menuItemCount(); n != 3 {
+		return fmt.Errorf("the table's menu holds %d items, want 3", n)
+	}
+	if err := tbl.SetMenu(nil); err != nil {
+		return fmt.Errorf("SetMenu(nil): %w", err)
+	}
+	if n := tbl.menuItemCount(); n != 0 {
+		return fmt.Errorf("after clearing, the menu holds %d items", n)
+	}
 	// A row that does not exist clears the selection instead of pretending.
 	if err := tbl.SetDouble(9); err != nil {
 		return err

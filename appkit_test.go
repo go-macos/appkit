@@ -18,6 +18,7 @@ import (
 // a Linux runner — and on every architecture under qemu — with no window
 // server anywhere.
 type fakeImpl struct {
+	menu       []MenuItem
 	items      []string
 	x, y, w, h float64
 	parent     objc.ID
@@ -40,6 +41,8 @@ func (f *fakeImpl) setDouble(v float64)         { f.dbl = v }
 func (f *fakeImpl) boolValue() bool             { return f.bl }
 func (f *fakeImpl) setBool(on bool)             { f.bl = on }
 func (f *fakeImpl) setItems(items []string)     { f.items = append([]string(nil), items...) }
+func (f *fakeImpl) setMenu(items []MenuItem)    { f.menu = append([]MenuItem(nil), items...) }
+func (f *fakeImpl) menuCount() int              { return len(f.menu) }
 func (f *fakeImpl) columnsEditable() bool       { return false }
 func (f *fakeImpl) release()                    { f.released = true }
 
@@ -374,4 +377,83 @@ func TestAListIsReadNotTypedInto(t *testing.T) {
 	if c.columnsAreEditable() {
 		t.Error("a closed control reported an editable column")
 	}
+}
+
+// TestAMenuIsTheOtherShape covers the verbs of a row.
+//
+// Buttons along the bottom of a window are a dialogue's shape: a fixed row that
+// must all fit, all the time, whether or not any of them applies to what is
+// selected. A context menu is the other shape — the verbs that apply to THIS
+// row, where the row is, named in full rather than abbreviated to fit.
+func TestAMenuIsTheOtherShape(t *testing.T) {
+	fakeCreate(t)
+	c, err := NewTableView([]string{"un"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	picked := 0
+	if err := c.SetMenu([]MenuItem{
+		{Title: "Retry", OnPick: func() { picked++ }},
+		{}, // a separator has no name, and needs none
+		{Title: "Remove"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := getFake(c).menu
+	if len(got) != 3 {
+		t.Fatalf("the control was given %d items", len(got))
+	}
+	if n := c.menuItemCount(); n != 3 {
+		t.Errorf("the menu counts %d items, want 3", n)
+	}
+	if got[1].Title != "" {
+		t.Errorf("the separator came through as %q", got[1].Title)
+	}
+	// An item with no handler is inert rather than absent: a menu that hides
+	// what does not apply moves everything else while a person is reading it.
+	if got[2].OnPick != nil {
+		t.Error("an item with no handler grew one")
+	}
+	got[0].OnPick()
+	if picked != 1 {
+		t.Errorf("choosing the first item ran it %d times", picked)
+	}
+	// No items removes the menu.
+	if err := c.SetMenu(nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(getFake(c).menu) != 0 || c.menuItemCount() != 0 {
+		t.Error("an empty menu left items behind")
+	}
+	c.Close()
+	if err := c.SetMenu([]MenuItem{{Title: "x"}}); err == nil {
+		t.Error("SetMenu on a closed control reported success")
+	}
+	// A closed control counts nothing rather than reaching a freed object.
+	if n := c.menuItemCount(); n != 0 {
+		t.Errorf("a closed control counts %d menu items", n)
+	}
+}
+
+// TestAMenuPickFindsItsHandler covers the table a menu item's tag is looked up
+// in — its own, not the controls': a menu is not a control, and sharing one
+// would let an item and a button collide on a number.
+func TestAMenuPickFindsItsHandler(t *testing.T) {
+	ran := 0
+	menuMu.Lock()
+	menuPicks[999] = func() { ran++ }
+	menuMu.Unlock()
+	t.Cleanup(func() {
+		menuMu.Lock()
+		delete(menuPicks, 999)
+		menuMu.Unlock()
+	})
+
+	dispatchMenu(999)
+	if ran != 1 {
+		t.Errorf("the handler ran %d times", ran)
+	}
+	// A tag nobody registered is silence, not a panic: AppKit may deliver one
+	// after the control that owned it has gone.
+	dispatchMenu(1000)
 }
