@@ -18,6 +18,7 @@ import (
 // a Linux runner — and on every architecture under qemu — with no window
 // server anywhere.
 type fakeImpl struct {
+	items      []string
 	x, y, w, h float64
 	parent     objc.ID
 	removed    bool
@@ -38,6 +39,7 @@ func (f *fakeImpl) doubleValue() float64        { return f.dbl }
 func (f *fakeImpl) setDouble(v float64)         { f.dbl = v }
 func (f *fakeImpl) boolValue() bool             { return f.bl }
 func (f *fakeImpl) setBool(on bool)             { f.bl = on }
+func (f *fakeImpl) setItems(items []string)     { f.items = append([]string(nil), items...) }
 func (f *fakeImpl) release()                    { f.released = true }
 
 // fakeCreate installs a create seam that hands out a fresh *fakeImpl for every
@@ -63,15 +65,26 @@ func getFake(c *Control) *fakeImpl { return c.im.(*fakeImpl) }
 
 func TestKindString(t *testing.T) {
 	want := map[Kind]string{
-		Button:          "Button",
-		Label:           "Label",
-		TextField:       "TextField",
-		SecureTextField: "SecureTextField",
-		Checkbox:        "Checkbox",
-		RadioButton:     "RadioButton",
-		Switch:          "Switch",
-		Slider:          "Slider",
-		PopUpButton:     "PopUpButton",
+		Button:            "Button",
+		Label:             "Label",
+		TextField:         "TextField",
+		SecureTextField:   "SecureTextField",
+		Checkbox:          "Checkbox",
+		RadioButton:       "RadioButton",
+		Switch:            "Switch",
+		Slider:            "Slider",
+		PopUpButton:       "PopUpButton",
+		ProgressIndicator: "ProgressIndicator",
+		Spinner:           "Spinner",
+		Stepper:           "Stepper",
+		SearchField:       "SearchField",
+		ComboBox:          "ComboBox",
+		SegmentedControl:  "SegmentedControl",
+		TextView:          "TextView",
+		LinkButton:        "LinkButton",
+		DatePicker:        "DatePicker",
+		ColorWell:         "ColorWell",
+		TableView:         "TableView",
 	}
 	for k, s := range want {
 		if got := k.String(); got != s {
@@ -96,6 +109,13 @@ func TestSpecValidate(t *testing.T) {
 		{"popup ok", Spec{Kind: PopUpButton, Items: []string{"a"}}, true},
 		{"slider min>=max", Spec{Kind: Slider, Min: 1, Max: 1}, false},
 		{"slider ok", Spec{Kind: Slider, Min: 0, Max: 1}, true},
+		{"segmented empty", Spec{Kind: SegmentedControl}, false},
+		{"segmented ok", Spec{Kind: SegmentedControl, Items: []string{"a"}}, true},
+		{"stepper min>=max", Spec{Kind: Stepper, Min: 2, Max: 1}, false},
+		{"stepper ok", Spec{Kind: Stepper, Min: 0, Max: 10}, true},
+		{"progress min>=max", Spec{Kind: ProgressIndicator, Min: 0, Max: 0}, false},
+		{"progress ok", Spec{Kind: ProgressIndicator, Min: 0, Max: 1}, true},
+		{"combobox empty ok", Spec{Kind: ComboBox}, true},
 	}
 	for _, c := range cases {
 		err := c.spec.validate()
@@ -138,6 +158,17 @@ func TestConstructors(t *testing.T) {
 		{"Switch", func() (*Control, error) { return NewSwitch() }, Switch},
 		{"Slider", func() (*Control, error) { return NewSlider(0, 10, 5) }, Slider},
 		{"PopUpButton", func() (*Control, error) { return NewPopUpButton([]string{"x"}) }, PopUpButton},
+		{"ProgressIndicator", func() (*Control, error) { return NewProgressIndicator(0, 100) }, ProgressIndicator},
+		{"Spinner", func() (*Control, error) { return NewSpinner() }, Spinner},
+		{"Stepper", func() (*Control, error) { return NewStepper(0, 10, 5) }, Stepper},
+		{"SearchField", func() (*Control, error) { return NewSearchField("q") }, SearchField},
+		{"ComboBox", func() (*Control, error) { return NewComboBox([]string{"a", "b"}) }, ComboBox},
+		{"SegmentedControl", func() (*Control, error) { return NewSegmentedControl([]string{"L", "R"}) }, SegmentedControl},
+		{"TextView", func() (*Control, error) { return NewTextView("body") }, TextView},
+		{"LinkButton", func() (*Control, error) { return NewLinkButton("home") }, LinkButton},
+		{"DatePicker", func() (*Control, error) { return NewDatePicker() }, DatePicker},
+		{"ColorWell", func() (*Control, error) { return NewColorWell() }, ColorWell},
+		{"TableView", func() (*Control, error) { return NewTableView([]string{"un", "deux"}) }, TableView},
 	}
 	for _, c := range cases {
 		ctl, err := c.make()
@@ -296,5 +327,28 @@ func TestUnsupportedMentionsPlatform(t *testing.T) {
 	// consumer's logs.
 	if !strings.Contains(ErrUnsupported.Error(), "macOS") {
 		t.Errorf("ErrUnsupported = %q, expected it to mention macOS", ErrUnsupported.Error())
+	}
+}
+
+// TestSetItemsReachesTheControl covers replacing the rows of a list.
+//
+// A list whose contents are fixed at creation is not a list anybody needs: the
+// queue this was built for gains and loses entries while its window is open.
+func TestSetItemsReachesTheControl(t *testing.T) {
+	fakeCreate(t)
+	c, err := NewTableView([]string{"un"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetItems([]string{"un", "deux", "trois"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := getFake(c).items; len(got) != 3 || got[2] != "trois" {
+		t.Errorf("the control was given %v", got)
+	}
+	// A closed control has no impl to reach, and says so rather than panicking.
+	c.Close()
+	if err := c.SetItems([]string{"x"}); err == nil {
+		t.Error("SetItems on a closed control reported success")
 	}
 }

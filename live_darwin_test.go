@@ -80,6 +80,47 @@ func TestLiveBindings(t *testing.T) {
 // runLiveSmoke builds each control kind for real and checks its value round-trips
 // through AppKit. It returns the first mismatch, or nil.
 func runLiveSmoke() error {
+	// A list, which is the one kind here that answers a DATA SOURCE rather
+	// than holding a value: AppKit asks how many rows there are and what is in
+	// each, every time it draws.
+	tbl, err := NewTableView([]string{"un", "deux", "trois"})
+	if err != nil {
+		return fmt.Errorf("NewTableView: %w", err)
+	}
+	defer tbl.Close()
+	// Nothing chosen yet reads as -1, not as row zero. A list that claims a
+	// selection it does not have makes every caller act on the wrong row.
+	if got := tbl.Double(); got != -1 {
+		return fmt.Errorf("a fresh TableView reports row %v, want -1", got)
+	}
+	if err := tbl.SetDouble(2); err != nil {
+		return err
+	}
+	if got := tbl.Double(); got != 2 {
+		return fmt.Errorf("TableView selected row = %v, want 2", got)
+	}
+	// Replacing the rows shortens the list under the selection; AppKit drops
+	// it rather than keeping an index past the end.
+	if err := tbl.SetItems([]string{"seul"}); err != nil {
+		return err
+	}
+	if got := tbl.Double(); got >= 1 {
+		return fmt.Errorf("after shrinking to one row the selection is %v", got)
+	}
+	if err := tbl.SetDouble(0); err != nil {
+		return err
+	}
+	if got := tbl.Double(); got != 0 {
+		return fmt.Errorf("selecting the only row gave %v, want 0", got)
+	}
+	// A row that does not exist clears the selection instead of pretending.
+	if err := tbl.SetDouble(9); err != nil {
+		return err
+	}
+	if got := tbl.Double(); got != -1 {
+		return fmt.Errorf("selecting row 9 of a one-row list gave %v, want -1", got)
+	}
+
 	tf, err := NewTextField("hello")
 	if err != nil {
 		return fmt.Errorf("NewTextField: %w", err)
@@ -161,6 +202,10 @@ func runLiveSmoke() error {
 		return fmt.Errorf("PopUp selection = %q, want Two", got)
 	}
 
+	if err := runLiveSmokeExtra(); err != nil {
+		return err
+	}
+
 	// Frame + add to a real parent view + remove: setFrame: (NSRect by value),
 	// addSubview:, removeFromSuperview.
 	btn, err := NewButton("Go")
@@ -186,6 +231,157 @@ func runLiveSmoke() error {
 	}
 	if n := int(parent.Send(objc.Sel("subviews")).Send(objc.Sel("count"))); n != 0 {
 		return fmt.Errorf("after Remove, subview count = %d, want 0", n)
+	}
+	return nil
+}
+
+// runLiveSmokeExtra builds each of the ten controls added on top of the original
+// set and round-trips its value through the real AppKit selectors: the double of
+// a progress bar and a stepper, the animation state of a spinner, the text of a
+// search field, combo box and text view, the selected label of a segmented
+// control, the title of a link button, and the two boundary conversions —
+// NSDate to an ISO string and NSColor to a hex string — the binding does so a
+// host sees only the string.
+func runLiveSmokeExtra() error {
+	pi, err := NewProgressIndicator(0, 100)
+	if err != nil {
+		return fmt.Errorf("NewProgressIndicator: %w", err)
+	}
+	defer pi.Close()
+	if got := pi.Double(); got != 0 {
+		return fmt.Errorf("ProgressIndicator initial = %v, want 0", got)
+	}
+	if err := pi.SetDouble(42); err != nil {
+		return err
+	}
+	if got := pi.Double(); got != 42 {
+		return fmt.Errorf("ProgressIndicator value = %v, want 42", got)
+	}
+
+	sp, err := NewSpinner()
+	if err != nil {
+		return fmt.Errorf("NewSpinner: %w", err)
+	}
+	defer sp.Close()
+	if err := sp.SetBool(true); err != nil {
+		return err
+	}
+	if !sp.Bool() {
+		return fmt.Errorf("Spinner animating = false after start, want true")
+	}
+	if err := sp.SetBool(false); err != nil {
+		return err
+	}
+	if sp.Bool() {
+		return fmt.Errorf("Spinner animating = true after stop, want false")
+	}
+
+	st, err := NewStepper(0, 10, 3)
+	if err != nil {
+		return fmt.Errorf("NewStepper: %w", err)
+	}
+	defer st.Close()
+	if got := st.Double(); got != 3 {
+		return fmt.Errorf("Stepper initial = %v, want 3", got)
+	}
+	if err := st.SetDouble(7); err != nil {
+		return err
+	}
+	if got := st.Double(); got != 7 {
+		return fmt.Errorf("Stepper value = %v, want 7", got)
+	}
+
+	sf, err := NewSearchField("hi")
+	if err != nil {
+		return fmt.Errorf("NewSearchField: %w", err)
+	}
+	defer sf.Close()
+	if got := sf.StringValue(); got != "hi" {
+		return fmt.Errorf("SearchField initial = %q, want hi", got)
+	}
+	if err := sf.SetStringValue("bye"); err != nil {
+		return err
+	}
+	if got := sf.StringValue(); got != "bye" {
+		return fmt.Errorf("SearchField value = %q, want bye", got)
+	}
+
+	cb, err := NewComboBox([]string{"Apple", "Banana"})
+	if err != nil {
+		return fmt.Errorf("NewComboBox: %w", err)
+	}
+	defer cb.Close()
+	if err := cb.SetStringValue("Cherry"); err != nil {
+		return err
+	}
+	if got := cb.StringValue(); got != "Cherry" {
+		return fmt.Errorf("ComboBox value = %q, want Cherry", got)
+	}
+
+	sg, err := NewSegmentedControl([]string{"One", "Two", "Three"})
+	if err != nil {
+		return fmt.Errorf("NewSegmentedControl: %w", err)
+	}
+	defer sg.Close()
+	if err := sg.SetStringValue("Two"); err != nil {
+		return err
+	}
+	if got := sg.StringValue(); got != "Two" {
+		return fmt.Errorf("SegmentedControl selection = %q, want Two", got)
+	}
+
+	tv, err := NewTextView("hello")
+	if err != nil {
+		return fmt.Errorf("NewTextView: %w", err)
+	}
+	defer tv.Close()
+	if got := tv.StringValue(); got != "hello" {
+		return fmt.Errorf("TextView initial = %q, want hello", got)
+	}
+	if err := tv.SetStringValue("multi\nline"); err != nil {
+		return err
+	}
+	if got := tv.StringValue(); got != "multi\nline" {
+		return fmt.Errorf("TextView value = %q, want multi/line", got)
+	}
+
+	lb, err := NewLinkButton("Home")
+	if err != nil {
+		return fmt.Errorf("NewLinkButton: %w", err)
+	}
+	defer lb.Close()
+	if got := lb.StringValue(); got != "Home" {
+		return fmt.Errorf("LinkButton title = %q, want Home", got)
+	}
+	if err := lb.SetStringValue("Away"); err != nil {
+		return err
+	}
+	if got := lb.StringValue(); got != "Away" {
+		return fmt.Errorf("LinkButton title = %q, want Away", got)
+	}
+
+	dp, err := NewDatePicker()
+	if err != nil {
+		return fmt.Errorf("NewDatePicker: %w", err)
+	}
+	defer dp.Close()
+	if err := dp.SetStringValue("2021-03-14"); err != nil {
+		return err
+	}
+	if got := dp.StringValue(); got != "2021-03-14" {
+		return fmt.Errorf("DatePicker value = %q, want 2021-03-14", got)
+	}
+
+	cw, err := NewColorWell()
+	if err != nil {
+		return fmt.Errorf("NewColorWell: %w", err)
+	}
+	defer cw.Close()
+	if err := cw.SetStringValue("#1E90FF"); err != nil {
+		return err
+	}
+	if got := cw.StringValue(); got != "#1E90FF" {
+		return fmt.Errorf("ColorWell value = %q, want #1E90FF", got)
 	}
 	return nil
 }

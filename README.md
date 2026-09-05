@@ -41,6 +41,16 @@ AppKit does the control.**
 | `NewSwitch` | `NSSwitch` | `Bool` | `OnAction` on toggle |
 | `NewSlider` | `NSSlider` | `Double` | `OnChange` while dragging |
 | `NewPopUpButton` | `NSPopUpButton` | `StringValue` (selected title) | `OnAction` on select |
+| `NewProgressIndicator` | `NSProgressIndicator` (bar) | `Double` (in `[min,max]`) | — (read-only) |
+| `NewSpinner` | `NSProgressIndicator` (spinning) | `Bool` → start/stop animation | — |
+| `NewStepper` | `NSStepper` | `Double` | `OnAction` on step |
+| `NewSearchField` | `NSSearchField` | `StringValue` | `OnAction` on Return; `OnChange` per keystroke |
+| `NewComboBox` | `NSComboBox` (editable) | `StringValue` (typed or picked) | `OnAction` on Return/pick; `OnChange` per keystroke |
+| `NewSegmentedControl` | `NSSegmentedControl` | `StringValue` (selected segment label) | `OnAction` on select |
+| `NewTextView` | `NSTextView` (in `NSScrollView`) | `StringValue` (multi-line) | `OnChange` per edit |
+| `NewLinkButton` | `NSButton` (hyperlink) | `StringValue` (title) | `OnAction` on click |
+| `NewDatePicker` | `NSDatePicker` | `StringValue` (ISO `YYYY-MM-DD`) | `OnAction` on change |
+| `NewColorWell` | `NSColorWell` | `StringValue` (`#RRGGBB`) | `OnAction`/`OnChange` on change |
 
 ## Contract
 
