@@ -84,6 +84,7 @@ func TestKindString(t *testing.T) {
 		LinkButton:        "LinkButton",
 		DatePicker:        "DatePicker",
 		ColorWell:         "ColorWell",
+		TableView:         "TableView",
 	}
 	for k, s := range want {
 		if got := k.String(); got != s {
@@ -167,6 +168,7 @@ func TestConstructors(t *testing.T) {
 		{"LinkButton", func() (*Control, error) { return NewLinkButton("home") }, LinkButton},
 		{"DatePicker", func() (*Control, error) { return NewDatePicker() }, DatePicker},
 		{"ColorWell", func() (*Control, error) { return NewColorWell() }, ColorWell},
+		{"TableView", func() (*Control, error) { return NewTableView([]string{"un", "deux"}) }, TableView},
 	}
 	for _, c := range cases {
 		ctl, err := c.make()
@@ -325,5 +327,28 @@ func TestUnsupportedMentionsPlatform(t *testing.T) {
 	// consumer's logs.
 	if !strings.Contains(ErrUnsupported.Error(), "macOS") {
 		t.Errorf("ErrUnsupported = %q, expected it to mention macOS", ErrUnsupported.Error())
+	}
+}
+
+// TestSetItemsReachesTheControl covers replacing the rows of a list.
+//
+// A list whose contents are fixed at creation is not a list anybody needs: the
+// queue this was built for gains and loses entries while its window is open.
+func TestSetItemsReachesTheControl(t *testing.T) {
+	fakeCreate(t)
+	c, err := NewTableView([]string{"un"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetItems([]string{"un", "deux", "trois"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := getFake(c).items; len(got) != 3 || got[2] != "trois" {
+		t.Errorf("the control was given %v", got)
+	}
+	// A closed control has no impl to reach, and says so rather than panicking.
+	c.Close()
+	if err := c.SetItems([]string{"x"}); err == nil {
+		t.Error("SetItems on a closed control reported success")
 	}
 }
