@@ -53,6 +53,11 @@ var (
 var (
 	textTagsMu sync.Mutex
 	textTags   = map[uintptr]uint64{}
+	// tableRows is what each live NSTableView shows. AppKit asks a data source
+	// how many rows there are and what is in each; the one shared target
+	// answers both, so it must know WHICH table is asking.
+	tableRowsMu sync.Mutex
+	tableRows   = map[uintptr][]string{}
 )
 
 // The FFI leaves are package variables so tests drive every branch — the
@@ -63,10 +68,49 @@ var (
 	loadAppKit = func() error { return objc.Load(objc.AppKit, objc.Foundation) }
 
 	registerTargetClass = func() (objc.Class, error) {
-		return objc.RegisterClass(
+		// Declared conformance, not just the methods: -setDataSource: and
+		// -setDelegate: on NSTableView check conformsToProtocol:, and a class
+		// that merely implements the selectors is refused.
+		var protos []*objc.Protocol
+		for _, name := range []string{"NSTableViewDataSource", "NSTableViewDelegate"} {
+			if p := objc.GetProtocol(name); p != nil {
+				protos = append(protos, p)
+			}
+		}
+		return objc.RegisterClassWithProtocols(
 			"GoMacOSAppKitTarget",
 			objc.GetClass("NSObject"),
+			protos,
 			[]objc.MethodDef{
+				{
+					// How many rows this table has.
+					Cmd: objc.Sel("numberOfRowsInTableView:"),
+					Fn: func(_ objc.ID, _ objc.SEL, tv objc.ID) int {
+						return len(rowsOf(tv))
+					},
+				},
+				{
+					// What is in one of them. Out-of-range asks happen while a
+					// table is being reloaded and must answer empty rather than
+					// panic across the FFI boundary, where a Go panic has no
+					// frame to unwind into.
+					Cmd: objc.Sel("tableView:objectValueForTableColumn:row:"),
+					Fn: func(_ objc.ID, _ objc.SEL, tv, _ objc.ID, row int) objc.ID {
+						rows := rowsOf(tv)
+						if row < 0 || row >= len(rows) {
+							return objc.NSString("")
+						}
+						return objc.NSString(rows[row])
+					},
+				},
+				{
+					// The selection moved.
+					Cmd: objc.Sel("tableViewSelectionDidChange:"),
+					Fn: func(_ objc.ID, _ objc.SEL, note objc.ID) {
+						obj := note.Send(objc.Sel("object"))
+						dispatchChange(uint64(obj.Send(selTag)))
+					},
+				},
 				// MethodDef.Fn is the raw Go func; RegisterClass wraps it into an
 				// IMP itself, so it must not be pre-wrapped here.
 				{
@@ -221,11 +265,13 @@ func platformCreate(spec Spec, tag uint64) (impl, error) {
 		n.view, n.fmtr = makeDatePicker()
 	case ColorWell:
 		n.view = newObject("NSColorWell")
+	case TableView:
+		n.view, n.value = makeTableView(spec.Items)
 	}
 	// A TextView needs both its scroll view and its text view; a DatePicker needs
 	// its formatter. Any zero here is a failed creation.
 	if n.view == 0 ||
-		(spec.Kind == TextView && n.value == 0) ||
+		((spec.Kind == TextView || spec.Kind == TableView) && n.value == 0) ||
 		(spec.Kind == DatePicker && n.fmtr == 0) {
 		return nil, fmt.Errorf("appkit: creating %s failed", spec.Kind)
 	}
@@ -237,6 +283,10 @@ func platformCreate(spec Spec, tag uint64) (impl, error) {
 	// it is meaningful; the TextView is reached through textTags instead.
 	switch spec.Kind {
 	case ProgressIndicator, Spinner, TextView:
+	case TableView:
+		// The scroll view around it is a plain NSView; the table inside is an
+		// NSControl, and it is what the selection notification names.
+		n.value.Send(objc.Sel("setTag:"), int(tag))
 	default:
 		n.view.Send(objc.Sel("setTag:"), int(tag))
 	}
@@ -461,6 +511,12 @@ func (n *nativeControl) wire(tag uint64) {
 		// No editing delegate; its action carries both action and change.
 		n.view.Send(objc.Sel("setTarget:"), target)
 		n.view.Send(objc.Sel("setAction:"), selActionChange)
+	case TableView:
+		// AppKit pulls the rows from a data source and reports the selection
+		// to a delegate. Both are the shared target, which answers for every
+		// table by looking the asking one up.
+		n.value.Send(objc.Sel("setDataSource:"), target)
+		n.value.Send(objc.Sel("setDelegate:"), target)
 	case TextView:
 		// Not an NSControl: only an NSText change notification, keyed by object.
 		textTagsMu.Lock()
@@ -484,13 +540,31 @@ func (n *nativeControl) addTo(parent objc.ID)  { parent.Send(objc.Sel("addSubvie
 func (n *nativeControl) removeFromParent()     { n.view.Send(objc.Sel("removeFromSuperview")) }
 func (n *nativeControl) setHidden(hidden bool) { n.view.Send(objc.Sel("setHidden:"), hidden) }
 func (n *nativeControl) doubleValue() float64 {
+	// A table has no value of its own; what a caller wants from it is which
+	// row is chosen, and -1 when none is. That rides Double rather than a
+	// method of its own so a list binds through the same seam as a slider.
+	if n.kind == TableView {
+		return float64(objc.Send[int](n.value, objc.Sel("selectedRow")))
+	}
 	return objc.Send[float64](n.view, objc.Sel("doubleValue"))
 }
-func (n *nativeControl) setDouble(v float64) { n.view.Send(objc.Sel("setDoubleValue:"), v) }
+
+func (n *nativeControl) setDouble(v float64) {
+	if n.kind == TableView {
+		n.selectRow(int(v))
+		return
+	}
+	n.view.Send(objc.Sel("setDoubleValue:"), v)
+}
 
 // release frees the native object. A TextView is dropped from textTags first; a
 // DatePicker's retained formatter is released too.
 func (n *nativeControl) release() {
+	if n.kind == TableView {
+		tableRowsMu.Lock()
+		delete(tableRows, uintptr(n.value))
+		tableRowsMu.Unlock()
+	}
 	if n.kind == TextView {
 		textTagsMu.Lock()
 		delete(textTags, uintptr(n.value))
@@ -511,6 +585,42 @@ func (n *nativeControl) boolValue() bool {
 		return n.animating
 	}
 	return int(n.view.Send(objc.Sel("state"))) != 0
+}
+
+// setItems replaces what a list shows and asks it to redraw.
+//
+// The rows live beside the control rather than in it, because AppKit pulls
+// them from a data source instead of holding them: the table is asked, every
+// time it draws, what row 12 contains.
+func (n *nativeControl) setItems(items []string) {
+	switch n.kind {
+	case TableView:
+		tableRowsMu.Lock()
+		tableRows[uintptr(n.value)] = append([]string(nil), items...)
+		tableRowsMu.Unlock()
+		n.value.Send(objc.Sel("reloadData"))
+	case PopUpButton:
+		n.view.Send(objc.Sel("removeAllItems"))
+		for _, it := range items {
+			n.view.Send(objc.Sel("addItemWithTitle:"), objc.NSString(it))
+		}
+	case ComboBox:
+		n.view.Send(objc.Sel("removeAllItems"))
+		for _, it := range items {
+			n.view.Send(objc.Sel("addItemWithObjectValue:"), objc.NSString(it))
+		}
+	}
+}
+
+// selectRow moves the selection of a table, or clears it for a row outside it.
+func (n *nativeControl) selectRow(row int) {
+	if row < 0 || row >= len(rowsOf(n.value)) {
+		n.value.Send(objc.Sel("deselectAll:"), objc.ID(0))
+		return
+	}
+	set := objc.ClassID("NSIndexSet").Send(objc.Sel("indexSetWithIndex:"), row)
+	n.value.Send(objc.Sel("selectRowIndexes:byExtendingSelection:"), set, false)
+	n.value.Send(objc.Sel("scrollRowToVisible:"), row)
 }
 
 func (n *nativeControl) setBool(on bool) {
@@ -637,4 +747,55 @@ func hexToColor(s string) objc.ID {
 	g := float64((v>>8)&0xff) / 255
 	b := float64(v&0xff) / 255
 	return objc.ClassID("NSColor").Send(objc.Sel("colorWithSRGBRed:green:blue:alpha:"), r, g, b, 1.0)
+}
+
+// rowsOf is what the table view tv is showing.
+func rowsOf(tv objc.ID) []string {
+	tableRowsMu.Lock()
+	defer tableRowsMu.Unlock()
+	return tableRows[uintptr(tv)]
+}
+
+// makeTableView builds an NSTableView of one text column inside an
+// NSScrollView, and returns the pair: the scroll view is what a host adds and
+// frames, the table view is what carries the value and the tag.
+//
+// One column, no header: this is a list, and a person reading a queue wants
+// the rows, not a column title to sort by. The scroll view is what makes it a
+// list rather than a clipped rectangle -- AppKit's own scrolling, its elastic
+// bounce, its scroller that hides itself.
+func makeTableView(items []string) (objc.ID, objc.ID) {
+	tv := newObject("NSTableView")
+	if tv == 0 {
+		return 0, 0
+	}
+	col := newObject("NSTableColumn")
+	if col == 0 {
+		tv.Send(objc.Sel("release"))
+		return 0, 0
+	}
+	col.Send(objc.Sel("setIdentifier:"), objc.NSString("row"))
+	tv.Send(objc.Sel("addTableColumn:"), col)
+	col.Send(objc.Sel("release")) // the table owns it now
+	tv.Send(objc.Sel("setHeaderView:"), objc.ID(0))
+	tv.Send(objc.Sel("setUsesAlternatingRowBackgroundColors:"), true)
+	tv.Send(objc.Sel("setAllowsMultipleSelection:"), false)
+
+	tableRowsMu.Lock()
+	tableRows[uintptr(tv)] = append([]string(nil), items...)
+	tableRowsMu.Unlock()
+
+	sv := newObject("NSScrollView")
+	if sv == 0 {
+		tableRowsMu.Lock()
+		delete(tableRows, uintptr(tv))
+		tableRowsMu.Unlock()
+		tv.Send(objc.Sel("release"))
+		return 0, 0
+	}
+	sv.Send(objc.Sel("setHasVerticalScroller:"), true)
+	sv.Send(objc.Sel("setAutohidesScrollers:"), true)
+	sv.Send(objc.Sel("setDocumentView:"), tv) // retains tv
+	tv.Send(objc.Sel("release"))              // the scroll view owns it now
+	return sv, tv
 }

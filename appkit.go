@@ -97,6 +97,19 @@ const (
 	// #RRGGBB hex string (the binding converts to and from NSColor); its action
 	// fires when the colour changes.
 	ColorWell
+	// TableView is an NSTableView of one text column inside an NSScrollView:
+	// a list of [Spec.Items] a person picks a row from, with the system's own
+	// scrolling, keyboard navigation and accessibility.
+	//
+	// The selected row is [Control.Double] as a zero-based index, and -1 when
+	// nothing is selected; OnChange fires when the selection moves. The rows
+	// themselves are replaced with [Control.SetItems], because a list whose
+	// contents never change is not a list anybody needs.
+	//
+	// It is the one kind here that needs a DATA SOURCE rather than a value:
+	// AppKit asks how many rows there are and what is in each, so this package
+	// answers those two questions from the items it was given.
+	TableView
 
 	// kindCount bounds validation. Keep it last.
 	kindCount
@@ -143,6 +156,8 @@ func (k Kind) String() string {
 		return "DatePicker"
 	case ColorWell:
 		return "ColorWell"
+	case TableView:
+		return "TableView"
 	default:
 		return fmt.Sprintf("Kind(%d)", int(k))
 	}
@@ -210,6 +225,7 @@ type impl interface {
 	setDouble(v float64)
 	boolValue() bool
 	setBool(on bool)
+	setItems(items []string)
 	release()
 }
 
@@ -415,6 +431,16 @@ func NewColorWell() (*Control, error) {
 	return New(Spec{Kind: ColorWell})
 }
 
+// NewTableView makes a list of items: an NSTableView of one text column inside
+// an NSScrollView, with the system's scrolling, keyboard navigation and
+// accessibility.
+//
+// The chosen row is [Control.Double] as a zero-based index, -1 when none is;
+// OnChange fires when it moves. [Control.SetItems] replaces the rows.
+func NewTableView(items []string) (*Control, error) {
+	return New(Spec{Kind: TableView, Items: items})
+}
+
 // Kind reports which control this is.
 func (c *Control) Kind() Kind { return c.kind }
 
@@ -495,6 +521,15 @@ func (c *Control) Bool() bool {
 	var b bool
 	_ = c.withImpl(func(im impl) { b = im.boolValue() })
 	return b
+}
+
+// SetItems replaces the rows of a TableView (or the entries of a PopUpButton
+// or ComboBox), and reloads it.
+//
+// A list whose contents are fixed at creation is not a list anybody needs: the
+// queue this was built for gains and loses entries while the window is open.
+func (c *Control) SetItems(items []string) error {
+	return c.withImpl(func(i impl) { i.setItems(items) })
 }
 
 // OnAction registers the handler called when the control fires its primary

@@ -80,6 +80,47 @@ func TestLiveBindings(t *testing.T) {
 // runLiveSmoke builds each control kind for real and checks its value round-trips
 // through AppKit. It returns the first mismatch, or nil.
 func runLiveSmoke() error {
+	// A list, which is the one kind here that answers a DATA SOURCE rather
+	// than holding a value: AppKit asks how many rows there are and what is in
+	// each, every time it draws.
+	tbl, err := NewTableView([]string{"un", "deux", "trois"})
+	if err != nil {
+		return fmt.Errorf("NewTableView: %w", err)
+	}
+	defer tbl.Close()
+	// Nothing chosen yet reads as -1, not as row zero. A list that claims a
+	// selection it does not have makes every caller act on the wrong row.
+	if got := tbl.Double(); got != -1 {
+		return fmt.Errorf("a fresh TableView reports row %v, want -1", got)
+	}
+	if err := tbl.SetDouble(2); err != nil {
+		return err
+	}
+	if got := tbl.Double(); got != 2 {
+		return fmt.Errorf("TableView selected row = %v, want 2", got)
+	}
+	// Replacing the rows shortens the list under the selection; AppKit drops
+	// it rather than keeping an index past the end.
+	if err := tbl.SetItems([]string{"seul"}); err != nil {
+		return err
+	}
+	if got := tbl.Double(); got >= 1 {
+		return fmt.Errorf("after shrinking to one row the selection is %v", got)
+	}
+	if err := tbl.SetDouble(0); err != nil {
+		return err
+	}
+	if got := tbl.Double(); got != 0 {
+		return fmt.Errorf("selecting the only row gave %v, want 0", got)
+	}
+	// A row that does not exist clears the selection instead of pretending.
+	if err := tbl.SetDouble(9); err != nil {
+		return err
+	}
+	if got := tbl.Double(); got != -1 {
+		return fmt.Errorf("selecting row 9 of a one-row list gave %v, want -1", got)
+	}
+
 	tf, err := NewTextField("hello")
 	if err != nil {
 		return fmt.Errorf("NewTextField: %w", err)

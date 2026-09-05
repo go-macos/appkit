@@ -18,6 +18,7 @@ import (
 // a Linux runner — and on every architecture under qemu — with no window
 // server anywhere.
 type fakeImpl struct {
+	items      []string
 	x, y, w, h float64
 	parent     objc.ID
 	removed    bool
@@ -38,6 +39,7 @@ func (f *fakeImpl) doubleValue() float64        { return f.dbl }
 func (f *fakeImpl) setDouble(v float64)         { f.dbl = v }
 func (f *fakeImpl) boolValue() bool             { return f.bl }
 func (f *fakeImpl) setBool(on bool)             { f.bl = on }
+func (f *fakeImpl) setItems(items []string)     { f.items = append([]string(nil), items...) }
 func (f *fakeImpl) release()                    { f.released = true }
 
 // fakeCreate installs a create seam that hands out a fresh *fakeImpl for every
