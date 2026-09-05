@@ -403,6 +403,9 @@ func TestAMenuIsTheOtherShape(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("the control was given %d items", len(got))
 	}
+	if n := c.menuItemCount(); n != 3 {
+		t.Errorf("the menu counts %d items, want 3", n)
+	}
 	if got[1].Title != "" {
 		t.Errorf("the separator came through as %q", got[1].Title)
 	}
@@ -419,12 +422,16 @@ func TestAMenuIsTheOtherShape(t *testing.T) {
 	if err := c.SetMenu(nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(getFake(c).menu) != 0 {
+	if len(getFake(c).menu) != 0 || c.menuItemCount() != 0 {
 		t.Error("an empty menu left items behind")
 	}
 	c.Close()
 	if err := c.SetMenu([]MenuItem{{Title: "x"}}); err == nil {
 		t.Error("SetMenu on a closed control reported success")
+	}
+	// A closed control counts nothing rather than reaching a freed object.
+	if n := c.menuItemCount(); n != 0 {
+		t.Errorf("a closed control counts %d menu items", n)
 	}
 }
 
