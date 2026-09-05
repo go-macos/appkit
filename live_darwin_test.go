@@ -139,6 +139,31 @@ func runLiveSmoke() error {
 	if n := tbl.menuItemCount(); n != 0 {
 		return fmt.Errorf("after clearing, the menu holds %d items", n)
 	}
+	// A real picture on a real button, from bytes. A one-pixel PNG is enough:
+	// what this checks is that NSData and NSImage take the selectors, not that
+	// the icon is pretty. An NSImage built from a misspelt selector is nil,
+	// and a nil image is a button that looks exactly like one nobody gave a
+	// picture to.
+	icon, ierr := NewButton("Pause")
+	if ierr != nil {
+		return fmt.Errorf("NewButton: %w", ierr)
+	}
+	defer icon.Close()
+	if err := icon.SetImage(onePixelPNG); err != nil {
+		return err
+	}
+	if !icon.hasImage() {
+		return fmt.Errorf("the button took the bytes and has no image")
+	}
+	if err := icon.SetImageOnly(true); err != nil {
+		return err
+	}
+	if err := icon.SetImage(nil); err != nil {
+		return err
+	}
+	if icon.hasImage() {
+		return fmt.Errorf("clearing the image left one behind")
+	}
 	// A row that does not exist clears the selection instead of pretending.
 	if err := tbl.SetDouble(9); err != nil {
 		return err
@@ -410,4 +435,18 @@ func runLiveSmokeExtra() error {
 		return fmt.Errorf("ColorWell value = %q, want #1E90FF", got)
 	}
 	return nil
+}
+
+// onePixelPNG is the smallest valid PNG: one opaque pixel. Enough for AppKit to
+// build an NSImage from, which is all the live test asks of it.
+var onePixelPNG = []byte{
+	0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+	0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+	0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+	0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41,
+	0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+	0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
+	0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+	0x42, 0x60, 0x82,
 }
