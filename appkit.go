@@ -227,6 +227,9 @@ type impl interface {
 	setBool(on bool)
 	setItems(items []string)
 	setMenu(items []MenuItem)
+	setImage(png []byte)
+	setImageOnly(only bool)
+	imageSet() bool
 	menuCount() int
 	columnsEditable() bool
 	release()
@@ -596,6 +599,36 @@ func (c *Control) menuItemCount() int {
 	n := 0
 	_ = c.withImpl(func(i impl) { n = i.menuCount() })
 	return n
+}
+
+// SetImage puts a picture on a control -- a button, in practice -- from PNG (or
+// any other format NSImage reads) bytes.
+//
+// A toolbar is icons. Transmission's is eleven of them and not one word, and it
+// is legible at a glance because a picture of a pause sign is read faster than
+// the word "pause". A button that can only carry a title cannot make one.
+//
+// Passing no bytes removes the image and leaves the title.
+func (c *Control) SetImage(png []byte) error {
+	return c.withImpl(func(i impl) { i.setImage(png) })
+}
+
+// SetImageOnly says the control shows its picture and not its title.
+//
+// The title stays SET even so: it is what a screen reader announces and what
+// the tooltip shows, so an icon-only button that dropped its title would be a
+// button nobody using assistive technology could name.
+func (c *Control) SetImageOnly(only bool) error {
+	return c.withImpl(func(i impl) { i.setImageOnly(only) })
+}
+
+// hasImage reports whether the control carries a picture, for the live test:
+// an NSImage built from a misspelt selector is nil, and a nil image looks
+// exactly like a button nobody gave a picture to.
+func (c *Control) hasImage() bool {
+	has := false
+	_ = c.withImpl(func(i impl) { has = i.imageSet() })
+	return has
 }
 
 // OnAction registers the handler called when the control fires its primary

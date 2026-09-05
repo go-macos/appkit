@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unsafe"
 
 	"github.com/go-macos/objc"
 )
@@ -726,6 +727,51 @@ func (n *nativeControl) menuCount() int {
 		return 0
 	}
 	return objc.Send[int](m, objc.Sel("numberOfItems"))
+}
+
+// setImage puts a picture on the control, from encoded bytes.
+//
+// NSImage is created from NSData rather than a file: the caller has bytes --
+// an icon compiled into the program -- and writing them to a temporary file so
+// AppKit can read them back is a round trip through the disk for nothing.
+func (n *nativeControl) setImage(png []byte) {
+	if len(png) == 0 {
+		n.view.Send(objc.Sel("setImage:"), objc.ID(0))
+		return
+	}
+	data := objc.ClassID("NSData").Send(objc.Sel("dataWithBytes:length:"),
+		unsafe.Pointer(&png[0]), len(png))
+	if data == 0 {
+		return
+	}
+	img := objc.ClassID("NSImage").Send(objc.Sel("alloc")).
+		Send(objc.Sel("initWithData:"), data)
+	if img == 0 {
+		return
+	}
+	// A template image takes the system's own tint -- so it is dark on a light
+	// toolbar and light on a dark one, without the caller shipping two icons.
+	img.Send(objc.Sel("setTemplate:"), true)
+	n.view.Send(objc.Sel("setImage:"), img)
+	img.Send(objc.Sel("release")) // the control retains it
+}
+
+// setImageOnly hides the title without unsetting it: the title is what a
+// screen reader announces, so an icon-only button that dropped it would be a
+// button nobody using assistive technology could name.
+func (n *nativeControl) setImageOnly(only bool) {
+	// NSImageOnly is 1; NSImageLeft is 2, which is what a button with both
+	// shows.
+	pos := 2
+	if only {
+		pos = 1
+	}
+	n.view.Send(objc.Sel("setImagePosition:"), pos)
+}
+
+// imageSet reports whether the live control carries an image.
+func (n *nativeControl) imageSet() bool {
+	return n.view.Send(objc.Sel("image")) != 0
 }
 
 func (n *nativeControl) setBool(on bool) {

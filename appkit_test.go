@@ -18,6 +18,8 @@ import (
 // a Linux runner — and on every architecture under qemu — with no window
 // server anywhere.
 type fakeImpl struct {
+	image      []byte
+	imageOnly  bool
 	menu       []MenuItem
 	items      []string
 	x, y, w, h float64
@@ -42,6 +44,9 @@ func (f *fakeImpl) boolValue() bool             { return f.bl }
 func (f *fakeImpl) setBool(on bool)             { f.bl = on }
 func (f *fakeImpl) setItems(items []string)     { f.items = append([]string(nil), items...) }
 func (f *fakeImpl) setMenu(items []MenuItem)    { f.menu = append([]MenuItem(nil), items...) }
+func (f *fakeImpl) setImage(png []byte)         { f.image = append([]byte(nil), png...) }
+func (f *fakeImpl) setImageOnly(only bool)      { f.imageOnly = only }
+func (f *fakeImpl) imageSet() bool              { return len(f.image) > 0 }
 func (f *fakeImpl) menuCount() int              { return len(f.menu) }
 func (f *fakeImpl) columnsEditable() bool       { return false }
 func (f *fakeImpl) release()                    { f.released = true }
@@ -456,4 +461,53 @@ func TestAMenuPickFindsItsHandler(t *testing.T) {
 	// A tag nobody registered is silence, not a panic: AppKit may deliver one
 	// after the control that owned it has gone.
 	dispatchMenu(1000)
+}
+
+// TestAButtonCanCarryAPicture covers what a toolbar is made of.
+//
+// Transmission's has eleven icons and not one word, and it is legible at a
+// glance because a picture of a pause sign is read faster than the word
+// "pause". A button that can only carry a title cannot make one.
+func TestAButtonCanCarryAPicture(t *testing.T) {
+	fakeCreate(t)
+	c, err := NewButton("Pause")
+	if err != nil {
+		t.Fatal(err)
+	}
+	png := []byte{0x89, 'P', 'N', 'G', 1, 2, 3}
+	if err := c.SetImage(png); err != nil {
+		t.Fatal(err)
+	}
+	if got := getFake(c).image; len(got) != len(png) || got[1] != 'P' {
+		t.Errorf("the control was given %v", got)
+	}
+	// Icon-only hides the title; it does NOT unset it. The title is what a
+	// screen reader announces, so a button that dropped it would be one nobody
+	// using assistive technology could name.
+	if err := c.SetImageOnly(true); err != nil {
+		t.Fatal(err)
+	}
+	if !getFake(c).imageOnly {
+		t.Error("the control was not told to show the image alone")
+	}
+	if err := c.SetImageOnly(false); err != nil {
+		t.Fatal(err)
+	}
+	if getFake(c).imageOnly {
+		t.Error("the control was left showing the image alone")
+	}
+	// No bytes removes the picture rather than setting an empty one.
+	if err := c.SetImage(nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(getFake(c).image) != 0 || c.hasImage() {
+		t.Error("an empty image left bytes behind")
+	}
+	c.Close()
+	if err := c.SetImage(png); err == nil {
+		t.Error("SetImage on a closed control reported success")
+	}
+	if err := c.SetImageOnly(true); err == nil {
+		t.Error("SetImageOnly on a closed control reported success")
+	}
 }
