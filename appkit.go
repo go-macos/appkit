@@ -221,6 +221,7 @@ type impl interface {
 	setHidden(hidden bool)
 	stringValue() string
 	setStringValue(s string)
+	setTitle(s string)
 	doubleValue() float64
 	setDouble(v float64)
 	boolValue() bool
@@ -511,6 +512,21 @@ func (c *Control) SetHidden(hidden bool) error {
 // SecureTextField), or a pop-up's selected title.
 func (c *Control) SetStringValue(s string) error {
 	return c.withImpl(func(im impl) { im.setStringValue(s) })
+}
+
+// SetTitle replaces the caption of a control that HAS one: Button, Checkbox,
+// RadioButton and Switch, which are NSButtons.
+//
+// It exists because their caption was otherwise fixed for the life of the
+// control. SetStringValue does not reach it -- an NSButton has no stringValue,
+// which is true and was taken to mean the title could not be changed at all;
+// it has setTitle:. A consumer whose button says how many of something there
+// are could set that number once, at creation, and never again.
+//
+// On a kind with no caption it does nothing, rather than guessing at some other
+// text the caller might have meant.
+func (c *Control) SetTitle(s string) error {
+	return c.withImpl(func(im impl) { im.setTitle(s) })
 }
 
 // StringValue reads a text control's contents, or a pop-up's selected title.

@@ -28,6 +28,7 @@ type fakeImpl struct {
 	released   bool
 	hidden     bool
 	str        string
+	title      string
 	dbl        float64
 	bl         bool
 }
@@ -38,6 +39,7 @@ func (f *fakeImpl) removeFromParent()           { f.removed = true }
 func (f *fakeImpl) setHidden(h bool)            { f.hidden = h }
 func (f *fakeImpl) stringValue() string         { return f.str }
 func (f *fakeImpl) setStringValue(s string)     { f.str = s }
+func (f *fakeImpl) setTitle(s string)           { f.title = s }
 func (f *fakeImpl) doubleValue() float64        { return f.dbl }
 func (f *fakeImpl) setDouble(v float64)         { f.dbl = v }
 func (f *fakeImpl) boolValue() bool             { return f.bl }
@@ -509,5 +511,35 @@ func TestAButtonCanCarryAPicture(t *testing.T) {
 	}
 	if err := c.SetImageOnly(true); err == nil {
 		t.Error("SetImageOnly on a closed control reported success")
+	}
+}
+
+// TestSetTitle covers the caption of a control that has one.
+//
+// It was unreachable after creation: SetStringValue does not touch an
+// NSButton's title, and nothing else did, so a button that says how many of
+// something there are said it once and then said it for ever.
+func TestSetTitle(t *testing.T) {
+	fakeCreate(t)
+	c, err := NewButton("Downloading 0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := getFake(c)
+	if err := c.SetTitle("Downloading 1"); err != nil {
+		t.Fatal(err)
+	}
+	if f.title != "Downloading 1" {
+		t.Errorf("title = %q, want the new caption", f.title)
+	}
+	// The value and the caption are different things: setting one must not
+	// disturb the other.
+	if f.str != "" {
+		t.Errorf("SetTitle wrote the string value too: %q", f.str)
+	}
+
+	c.Close()
+	if err := c.SetTitle("gone"); !errors.Is(err, ErrClosed) {
+		t.Errorf("SetTitle after close = %v, want ErrClosed", err)
 	}
 }
