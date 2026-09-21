@@ -822,6 +822,16 @@ func (n *nativeControl) stringValue() string {
 	}
 }
 
+// setTitle replaces an NSButton's caption. Only the kinds that are NSButtons:
+// everything else has no title to set, and sending setTitle: to it would be
+// asking a control something it was never asked before.
+func (n *nativeControl) setTitle(s string) {
+	switch n.kind {
+	case Button, Checkbox, RadioButton, Switch:
+		n.view.Send(objc.Sel("setTitle:"), objc.NSString(s))
+	}
+}
+
 func (n *nativeControl) setStringValue(s string) {
 	switch n.kind {
 	case PopUpButton:
