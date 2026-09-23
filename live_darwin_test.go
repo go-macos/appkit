@@ -254,6 +254,31 @@ func runLiveSmoke() error {
 			"range did not move", got)
 	}
 
+	// The view whose whole purpose is to mask what is inside it. Asked of
+	// AppKit rather than assumed: a plain NSView clips nothing, and the layer
+	// that does the masking exists only if wantsLayer was set BEFORE it was
+	// asked for.
+	clip, err := NewClipView()
+	if err != nil {
+		return fmt.Errorf("NewClipView: %w", err)
+	}
+	defer clip.Close()
+	if !clipMasks(clip) {
+		return fmt.Errorf("a ClipView does not mask its bounds; anything inside it " +
+			"would be drawn whole")
+	}
+	inside, err := NewButton("inside")
+	if err != nil {
+		return fmt.Errorf("NewButton: %w", err)
+	}
+	defer inside.Close()
+	if err := clip.AddChild(inside); err != nil {
+		return err
+	}
+	if !isSubviewOfClip(clip, inside) {
+		return fmt.Errorf("the control was not put inside the clip view")
+	}
+
 	// A segmented control's labels, which were settable only at creation. The
 	// proof is selecting BY TITLE one that did not exist before: it can only be
 	// found if the relabel took.
@@ -481,4 +506,34 @@ var onePixelPNG = []byte{
 	0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
 	0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
 	0x42, 0x60, 0x82,
+}
+
+// clipMasks asks the live view whether its layer masks to bounds, which is the
+// one property that makes a ClipView a clip view.
+func clipMasks(c *Control) bool {
+	var masks bool
+	_ = c.withImpl(func(im impl) {
+		v := im.viewID()
+		if v == 0 {
+			return
+		}
+		l := v.Send(objc.Sel("layer"))
+		if l == 0 {
+			return
+		}
+		masks = v.Send(objc.Sel("layer")) != 0 &&
+			objc.Send[bool](l, objc.Sel("masksToBounds"))
+	})
+	return masks
+}
+
+// isSubviewOfClip asks AppKit whether the child really landed inside.
+func isSubviewOfClip(parent, child *Control) bool {
+	var pv, cv objc.ID
+	_ = parent.withImpl(func(im impl) { pv = im.viewID() })
+	_ = child.withImpl(func(im impl) { cv = im.viewID() })
+	if pv == 0 || cv == 0 {
+		return false
+	}
+	return objc.Send[objc.ID](cv, objc.Sel("superview")) == pv
 }

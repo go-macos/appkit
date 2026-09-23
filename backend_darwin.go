@@ -281,6 +281,8 @@ func platformCreate(spec Spec, tag uint64) (impl, error) {
 		n.view = newObject("NSColorWell")
 	case TableView:
 		n.view, n.value = makeTableView(spec.Items)
+	case ClipView:
+		n.view = makeClipView()
 	}
 	// A TextView needs both its scroll view and its text view; a DatePicker needs
 	// its formatter. Any zero here is a failed creation.
@@ -292,11 +294,14 @@ func platformCreate(spec Spec, tag uint64) (impl, error) {
 	if n.value == 0 {
 		n.value = n.view
 	}
-	// A -tag is only settable on an NSControl. NSProgressIndicator and the
-	// NSScrollView wrapping a TextView are plain NSViews, so tag them only where
-	// it is meaningful; the TextView is reached through textTags instead.
+	// A -tag is only settable on an NSControl. NSProgressIndicator, a ClipView
+	// and the NSScrollView wrapping a TextView are plain NSViews, so tag them
+	// only where it is meaningful; the TextView is reached through textTags
+	// instead. Sending setTag: to a bare NSView does not fail quietly -- it
+	// throws NSInvalidArgumentException and takes the process with it, which is
+	// how the live proof found this the moment a ClipView was first built.
 	switch spec.Kind {
-	case ProgressIndicator, Spinner, TextView:
+	case ProgressIndicator, Spinner, TextView, ClipView:
 	case TableView:
 		// The scroll view around it is a plain NSView; the table inside is an
 		// NSControl, and it is what the selection notification names.
@@ -430,6 +435,25 @@ func makeComboBox(items []string) objc.ID {
 // which is what makes "the selected segment's label" a single well-defined value.
 const segmentTrackingSelectOne = 0
 
+// makeClipView is a plain NSView that masks its subviews to its bounds.
+//
+// A layer is what does the masking: an NSView clips nothing by itself, and
+// wantsLayer must be set BEFORE the layer is asked for, or there is none to
+// set masksToBounds on.
+func makeClipView() objc.ID {
+	v := newObject("NSView")
+	if v == 0 {
+		return 0
+	}
+	v.Send(objc.Sel("setWantsLayer:"), true)
+	if l := v.Send(objc.Sel("layer")); l != 0 {
+		l.Send(objc.Sel("setMasksToBounds:"), true)
+	}
+	return v
+}
+
+func (n *nativeControl) viewID() objc.ID { return n.view }
+
 func makeSegmented(items []string) objc.ID {
 	s := newObject("NSSegmentedControl")
 	if s == 0 {
@@ -514,7 +538,10 @@ func makeDatePicker() (objc.ID, objc.ID) {
 // they have no action and report nothing back.
 func (n *nativeControl) wire(tag uint64) {
 	switch n.kind {
-	case Label, ProgressIndicator, Spinner:
+	case Label, ProgressIndicator, Spinner, ClipView:
+		// Nothing to fire. A ClipView has no action at all -- it is a hole with
+		// edges -- and setTarget: on a bare NSView throws rather than being
+		// ignored, which is how the live proof found this.
 		return
 	case TextField, SecureTextField, SearchField, ComboBox:
 		// Editable text: action on Return, delegate for per-keystroke change.

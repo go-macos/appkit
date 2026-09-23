@@ -30,6 +30,7 @@ type fakeImpl struct {
 	str        string
 	title      string
 	min, max   float64
+	view       objc.ID
 	dbl        float64
 	bl         bool
 }
@@ -42,6 +43,7 @@ func (f *fakeImpl) stringValue() string         { return f.str }
 func (f *fakeImpl) setStringValue(s string)     { f.str = s }
 func (f *fakeImpl) setTitle(s string)           { f.title = s }
 func (f *fakeImpl) setRange(lo, hi float64)     { f.min, f.max = lo, hi }
+func (f *fakeImpl) viewID() objc.ID             { return f.view }
 func (f *fakeImpl) doubleValue() float64        { return f.dbl }
 func (f *fakeImpl) setDouble(v float64)         { f.dbl = v }
 func (f *fakeImpl) boolValue() bool             { return f.bl }
@@ -61,7 +63,7 @@ func (f *fakeImpl) release()                    { f.released = true }
 func fakeCreate(t *testing.T) {
 	t.Helper()
 	old := create
-	create = func(Spec, uint64) (impl, error) { return &fakeImpl{}, nil }
+	create = func(Spec, uint64) (impl, error) { return &fakeImpl{view: objc.ID(0xFACE)}, nil }
 	t.Cleanup(func() { create = old })
 }
 
@@ -79,6 +81,7 @@ func getFake(c *Control) *fakeImpl { return c.im.(*fakeImpl) }
 func TestKindString(t *testing.T) {
 	want := map[Kind]string{
 		Button:            "Button",
+		ClipView:          "ClipView",
 		Label:             "Label",
 		TextField:         "TextField",
 		SecureTextField:   "SecureTextField",
@@ -571,5 +574,55 @@ func TestSetRange(t *testing.T) {
 	c.Close()
 	if err := c.SetRange(0, 1); !errors.Is(err, ErrClosed) {
 		t.Errorf("SetRange after close = %v, want ErrClosed", err)
+	}
+}
+
+// TestClipViewHoldsAChild covers the view whose whole purpose is to mask what
+// is put in it.
+//
+// A toolkit reports, for every control, both where it wants to be and the part
+// an enclosing viewport still shows. With nothing to clip against, the only
+// thing a back-end could honour was "entirely out of view", by hiding it — a
+// control scrolled HALF out of a list was drawn whole, over whatever the list
+// is not.
+func TestClipViewHoldsAChild(t *testing.T) {
+	fakeCreate(t)
+	clip, err := NewClipView()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := clip.Kind(); got != ClipView {
+		t.Errorf("kind = %v, want ClipView", got)
+	}
+	child, err := NewButton("inside")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := clip.AddChild(child); err != nil {
+		t.Fatal(err)
+	}
+	if got := getFake(child).parent; got == 0 {
+		t.Error("the child was not put inside anything")
+	}
+
+	// Nothing to add is not an error: a caller reconciling a tree may have no
+	// child this frame.
+	if err := clip.AddChild(nil); err != nil {
+		t.Errorf("AddChild(nil) = %v", err)
+	}
+	// A parent that is open but holds no view -- nothing to add to -- says so
+	// rather than adding the child to nothing and reporting success. It is a
+	// different path from the closed one below: this one gets past withImpl.
+	getFake(clip).view = 0
+	if err := clip.AddChild(child); !errors.Is(err, ErrClosed) {
+		t.Errorf("AddChild to a parent with no view = %v, want ErrClosed", err)
+	}
+	getFake(clip).view = objc.ID(0xFACE)
+
+	// A closed parent has no view to add to, and says so rather than adding the
+	// child to nothing and reporting success.
+	clip.Close()
+	if err := clip.AddChild(child); !errors.Is(err, ErrClosed) {
+		t.Errorf("AddChild on a closed parent = %v, want ErrClosed", err)
 	}
 }
