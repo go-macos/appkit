@@ -97,6 +97,16 @@ const (
 	// #RRGGBB hex string (the binding converts to and from NSColor); its action
 	// fires when the colour changes.
 	ColorWell
+	// ClipView is a plain NSView that MASKS ITS SUBVIEWS TO ITS BOUNDS. It draws
+	// nothing of its own: it exists so a control placed inside it shows only the
+	// part that falls within it.
+	//
+	// A toolkit reports, for every control, both where it wants to be and the
+	// part of that an enclosing viewport still shows. Without something to clip
+	// against, a control scrolled half out of a list is drawn whole, over
+	// whatever the list is not: the only thing a back-end could honour was
+	// "entirely out of view", by hiding it.
+	ClipView
 	// TableView is an NSTableView of one text column inside an NSScrollView:
 	// a list of [Spec.Items] a person picks a row from, with the system's own
 	// scrolling, keyboard navigation and accessibility.
@@ -158,6 +168,8 @@ func (k Kind) String() string {
 		return "ColorWell"
 	case TableView:
 		return "TableView"
+	case ClipView:
+		return "ClipView"
 	default:
 		return fmt.Sprintf("Kind(%d)", int(k))
 	}
@@ -223,6 +235,7 @@ type impl interface {
 	setStringValue(s string)
 	setTitle(s string)
 	setRange(min, max float64)
+	viewID() objc.ID
 	doubleValue() float64
 	setDouble(v float64)
 	boolValue() bool
@@ -454,6 +467,33 @@ func NewDatePicker() (*Control, error) {
 // colour changes.
 func NewColorWell() (*Control, error) {
 	return New(Spec{Kind: ColorWell})
+}
+
+// NewClipView makes a view that masks whatever is put inside it to its own
+// bounds. Give it the visible rectangle, put the control in it with AddChild at
+// the offset the control wants, and the part that falls outside is not drawn.
+func NewClipView() (*Control, error) {
+	return New(Spec{Kind: ClipView})
+}
+
+// AddChild puts another control inside this one, which is how a control gets
+// clipped: only a ClipView masks, and only its own subviews.
+//
+// It takes a Control rather than a raw view id so a caller never has to hold an
+// Objective-C handle -- the whole point of this package -- and it is the
+// counterpart of AddTo for the case where the parent is also ours.
+func (c *Control) AddChild(child *Control) error {
+	if child == nil {
+		return nil
+	}
+	var parent objc.ID
+	if err := c.withImpl(func(im impl) { parent = im.viewID() }); err != nil {
+		return err
+	}
+	if parent == 0 {
+		return ErrClosed
+	}
+	return child.AddTo(parent)
 }
 
 // NewTableView makes a list of items: an NSTableView of one text column inside
