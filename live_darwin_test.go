@@ -240,6 +240,38 @@ func runLiveSmoke() error {
 	if got := sl.Double(); got != 7 {
 		return fmt.Errorf("Slider value = %v, want 7", got)
 	}
+	// The bounds move, and the proof is a value the OLD range could not hold:
+	// AppKit clamps to the maximum, so 80 can only read back as 80 if the
+	// maximum really is no longer 10.
+	if err := sl.SetRange(0, 100); err != nil {
+		return err
+	}
+	if err := sl.SetDouble(80); err != nil {
+		return err
+	}
+	if got := sl.Double(); got != 80 {
+		return fmt.Errorf("after SetRange(0,100) the slider holds %v, want 80 -- the "+
+			"range did not move", got)
+	}
+
+	// A segmented control's labels, which were settable only at creation. The
+	// proof is selecting BY TITLE one that did not exist before: it can only be
+	// found if the relabel took.
+	seg, err := NewSegmentedControl([]string{"un", "deux"})
+	if err != nil {
+		return fmt.Errorf("NewSegmentedControl: %w", err)
+	}
+	defer seg.Close()
+	if err := seg.SetItems([]string{"alpha", "beta", "gamma"}); err != nil {
+		return err
+	}
+	if err := seg.SetStringValue("gamma"); err != nil {
+		return err
+	}
+	if got := seg.StringValue(); got != "gamma" {
+		return fmt.Errorf("segmented selection = %q, want \"gamma\" -- the labels did "+
+			"not change", got)
+	}
 
 	pu, err := NewPopUpButton([]string{"One", "Two", "Three"})
 	if err != nil {

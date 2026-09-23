@@ -222,6 +222,7 @@ type impl interface {
 	stringValue() string
 	setStringValue(s string)
 	setTitle(s string)
+	setRange(min, max float64)
 	doubleValue() float64
 	setDouble(v float64)
 	boolValue() bool
@@ -527,6 +528,18 @@ func (c *Control) SetStringValue(s string) error {
 // text the caller might have meant.
 func (c *Control) SetTitle(s string) error {
 	return c.withImpl(func(im impl) { im.setTitle(s) })
+}
+
+// SetRange moves the bounds of a Slider, Stepper or ProgressIndicator.
+//
+// They were settable only at creation, so a control whose scale depends on
+// something that changes -- a progress bar over a total nobody knew yet, a
+// stepper over a list that grew -- kept the range it was born with, and its
+// position then meant something different from what the caller intended.
+//
+// On a kind with no range it does nothing.
+func (c *Control) SetRange(min, max float64) error {
+	return c.withImpl(func(im impl) { im.setRange(min, max) })
 }
 
 // StringValue reads a text control's contents, or a pop-up's selected title.

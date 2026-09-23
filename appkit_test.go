@@ -29,6 +29,7 @@ type fakeImpl struct {
 	hidden     bool
 	str        string
 	title      string
+	min, max   float64
 	dbl        float64
 	bl         bool
 }
@@ -40,6 +41,7 @@ func (f *fakeImpl) setHidden(h bool)            { f.hidden = h }
 func (f *fakeImpl) stringValue() string         { return f.str }
 func (f *fakeImpl) setStringValue(s string)     { f.str = s }
 func (f *fakeImpl) setTitle(s string)           { f.title = s }
+func (f *fakeImpl) setRange(lo, hi float64)     { f.min, f.max = lo, hi }
 func (f *fakeImpl) doubleValue() float64        { return f.dbl }
 func (f *fakeImpl) setDouble(v float64)         { f.dbl = v }
 func (f *fakeImpl) boolValue() bool             { return f.bl }
@@ -541,5 +543,33 @@ func TestSetTitle(t *testing.T) {
 	c.Close()
 	if err := c.SetTitle("gone"); !errors.Is(err, ErrClosed) {
 		t.Errorf("SetTitle after close = %v, want ErrClosed", err)
+	}
+}
+
+// TestSetRange covers the bounds of the kinds that have them, which were
+// settable only at creation: a progress bar over a total nobody knew yet kept
+// the range it was born with, and its position then meant something other than
+// what the caller intended.
+func TestSetRange(t *testing.T) {
+	fakeCreate(t)
+	c, err := NewSlider(0, 10, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := getFake(c)
+	if err := c.SetRange(-5, 100); err != nil {
+		t.Fatal(err)
+	}
+	if f.min != -5 || f.max != 100 {
+		t.Errorf("range = %v..%v, want -5..100", f.min, f.max)
+	}
+	// The bounds and the value are different things.
+	if f.dbl != 0 {
+		t.Errorf("SetRange moved the value to %v", f.dbl)
+	}
+
+	c.Close()
+	if err := c.SetRange(0, 1); !errors.Is(err, ErrClosed) {
+		t.Errorf("SetRange after close = %v, want ErrClosed", err)
 	}
 }
