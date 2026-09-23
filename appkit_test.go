@@ -81,6 +81,7 @@ func getFake(c *Control) *fakeImpl { return c.im.(*fakeImpl) }
 func TestKindString(t *testing.T) {
 	want := map[Kind]string{
 		Button:            "Button",
+		ClipView:          "ClipView",
 		Label:             "Label",
 		TextField:         "TextField",
 		SecureTextField:   "SecureTextField",
@@ -609,6 +610,15 @@ func TestClipViewHoldsAChild(t *testing.T) {
 	if err := clip.AddChild(nil); err != nil {
 		t.Errorf("AddChild(nil) = %v", err)
 	}
+	// A parent that is open but holds no view -- nothing to add to -- says so
+	// rather than adding the child to nothing and reporting success. It is a
+	// different path from the closed one below: this one gets past withImpl.
+	getFake(clip).view = 0
+	if err := clip.AddChild(child); !errors.Is(err, ErrClosed) {
+		t.Errorf("AddChild to a parent with no view = %v, want ErrClosed", err)
+	}
+	getFake(clip).view = objc.ID(0xFACE)
+
 	// A closed parent has no view to add to, and says so rather than adding the
 	// child to nothing and reporting success.
 	clip.Close()
