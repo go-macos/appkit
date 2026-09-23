@@ -624,6 +624,13 @@ func (n *nativeControl) setItems(items []string) {
 		for _, it := range items {
 			n.view.Send(objc.Sel("addItemWithObjectValue:"), objc.NSString(it))
 		}
+	case SegmentedControl:
+		// The same shape makeSegmented uses: the count first, since a label is
+		// set FOR a segment and one that does not exist yet takes none.
+		n.view.Send(objc.Sel("setSegmentCount:"), len(items))
+		for i, it := range items {
+			n.view.Send(objc.Sel("setLabel:forSegment:"), objc.NSString(it), i)
+		}
 	}
 }
 
@@ -829,6 +836,17 @@ func (n *nativeControl) setTitle(s string) {
 	switch n.kind {
 	case Button, Checkbox, RadioButton, Switch:
 		n.view.Send(objc.Sel("setTitle:"), objc.NSString(s))
+	}
+}
+
+// setRange moves the bounds of the kinds that have them. The same two
+// selectors the constructors use, so a range set later lands exactly where a
+// range set at birth would have.
+func (n *nativeControl) setRange(min, max float64) {
+	switch n.kind {
+	case Slider, Stepper, ProgressIndicator:
+		n.view.Send(objc.Sel("setMinValue:"), min)
+		n.view.Send(objc.Sel("setMaxValue:"), max)
 	}
 }
 
