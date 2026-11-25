@@ -101,6 +101,9 @@ func TestKindString(t *testing.T) {
 		DatePicker:        "DatePicker",
 		ColorWell:         "ColorWell",
 		TableView:         "TableView",
+		GridView:          "GridView",
+		OutlineView:       "OutlineView",
+		TabView:           "TabView",
 	}
 	for k, s := range want {
 		if got := k.String(); got != s {

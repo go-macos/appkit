@@ -73,7 +73,8 @@ var (
 		// -setDelegate: on NSTableView check conformsToProtocol:, and a class
 		// that merely implements the selectors is refused.
 		var protos []*objc.Protocol
-		for _, name := range []string{"NSTableViewDataSource", "NSTableViewDelegate"} {
+		for _, name := range []string{"NSTableViewDataSource", "NSTableViewDelegate",
+			"NSOutlineViewDataSource", "NSOutlineViewDelegate", "NSTabViewDelegate"} {
 			if p := objc.GetProtocol(name); p != nil {
 				protos = append(protos, p)
 			}
@@ -87,7 +88,64 @@ var (
 					// How many rows this table has.
 					Cmd: objc.Sel("numberOfRowsInTableView:"),
 					Fn: func(_ objc.ID, _ objc.SEL, tv objc.ID) int {
+						if g := gridOf(tv); g != nil {
+							return len(g.rows)
+						}
 						return len(rowsOf(tv))
+					},
+				},
+				{
+					Cmd: objc.Sel("outlineView:numberOfChildrenOfItem:"),
+					Fn: func(_ objc.ID, _ objc.SEL, ov, item objc.ID) int {
+						st := outlineOf(ov)
+						return len(st.kids(itemIndex(item)))
+					},
+				},
+				{
+					Cmd: objc.Sel("outlineView:child:ofItem:"),
+					Fn: func(_ objc.ID, _ objc.SEL, ov objc.ID, index int, item objc.ID) objc.ID {
+						st := outlineOf(ov)
+						c, ok := st.child(itemIndex(item), index)
+						if !ok {
+							return 0
+						}
+						return st.items[c]
+					},
+				},
+				{
+					Cmd: objc.Sel("outlineView:isItemExpandable:"),
+					Fn: func(_ objc.ID, _ objc.SEL, ov, item objc.ID) bool {
+						st := outlineOf(ov)
+						return len(st.kids(itemIndex(item))) > 0
+					},
+				},
+				{
+					Cmd: objc.Sel("outlineView:objectValueForTableColumn:byItem:"),
+					Fn: func(_ objc.ID, _ objc.SEL, ov, _, item objc.ID) objc.ID {
+						st := outlineOf(ov)
+						return objc.NSString(st.title(itemIndex(item)))
+					},
+				},
+				{
+					Cmd: objc.Sel("outlineViewSelectionDidChange:"),
+					Fn: func(_ objc.ID, _ objc.SEL, note objc.ID) {
+						if collQuiet {
+							return
+						}
+						obj := note.Send(objc.Sel("object"))
+						dispatchChange(uint64(obj.Send(selTag)))
+					},
+				},
+				{
+					Cmd: objc.Sel("tabView:didSelectTabViewItem:"),
+					Fn: func(_ objc.ID, _ objc.SEL, tv, _ objc.ID) {
+						if collQuiet {
+							return
+						}
+						textTagsMu.Lock()
+						tag := textTags[uintptr(tv)]
+						textTagsMu.Unlock()
+						dispatchChange(tag)
 					},
 				},
 				{
@@ -96,7 +154,10 @@ var (
 					// panic across the FFI boundary, where a Go panic has no
 					// frame to unwind into.
 					Cmd: objc.Sel("tableView:objectValueForTableColumn:row:"),
-					Fn: func(_ objc.ID, _ objc.SEL, tv, _ objc.ID, row int) objc.ID {
+					Fn: func(_ objc.ID, _ objc.SEL, tv, col objc.ID, row int) objc.ID {
+						if g := gridOf(tv); g != nil {
+							return objc.NSString(gridCell(g, col, row))
+						}
 						rows := rowsOf(tv)
 						if row < 0 || row >= len(rows) {
 							return objc.NSString("")
@@ -108,6 +169,9 @@ var (
 					// The selection moved.
 					Cmd: objc.Sel("tableViewSelectionDidChange:"),
 					Fn: func(_ objc.ID, _ objc.SEL, note objc.ID) {
+						if collQuiet {
+							return
+						}
 						obj := note.Send(objc.Sel("object"))
 						dispatchChange(uint64(obj.Send(selTag)))
 					},
@@ -281,13 +345,19 @@ func platformCreate(spec Spec, tag uint64) (impl, error) {
 		n.view = newObject("NSColorWell")
 	case TableView:
 		n.view, n.value = makeTableView(spec.Items)
+	case GridView:
+		n.view, n.value = makeGridView(spec.Columns, spec.Rows)
+	case OutlineView:
+		n.view, n.value = makeOutlineView(spec.Tree)
+	case TabView:
+		n.view = makeTabView(spec.Items)
 	case ClipView:
 		n.view = makeClipView()
 	}
 	// A TextView needs both its scroll view and its text view; a DatePicker needs
 	// its formatter. Any zero here is a failed creation.
 	if n.view == 0 ||
-		((spec.Kind == TextView || spec.Kind == TableView) && n.value == 0) ||
+		((spec.Kind == TextView || spec.Kind == TableView || spec.Kind == GridView || spec.Kind == OutlineView) && n.value == 0) ||
 		(spec.Kind == DatePicker && n.fmtr == 0) {
 		return nil, fmt.Errorf("appkit: creating %s failed", spec.Kind)
 	}
@@ -301,8 +371,8 @@ func platformCreate(spec Spec, tag uint64) (impl, error) {
 	// throws NSInvalidArgumentException and takes the process with it, which is
 	// how the live proof found this the moment a ClipView was first built.
 	switch spec.Kind {
-	case ProgressIndicator, Spinner, TextView, ClipView:
-	case TableView:
+	case ProgressIndicator, Spinner, TextView, ClipView, TabView:
+	case TableView, GridView, OutlineView:
 		// The scroll view around it is a plain NSView; the table inside is an
 		// NSControl, and it is what the selection notification names.
 		n.value.Send(objc.Sel("setTag:"), int(tag))
@@ -552,12 +622,19 @@ func (n *nativeControl) wire(tag uint64) {
 		// No editing delegate; its action carries both action and change.
 		n.view.Send(objc.Sel("setTarget:"), target)
 		n.view.Send(objc.Sel("setAction:"), selActionChange)
-	case TableView:
+	case TableView, GridView, OutlineView:
 		// AppKit pulls the rows from a data source and reports the selection
 		// to a delegate. Both are the shared target, which answers for every
 		// table by looking the asking one up.
 		n.value.Send(objc.Sel("setDataSource:"), target)
 		n.value.Send(objc.Sel("setDelegate:"), target)
+	case TabView:
+		// An NSTabView is not an NSControl: no tag, no action. Its delegate is
+		// told when the tab changes, and finds the control through textTags.
+		textTagsMu.Lock()
+		textTags[uintptr(n.view)] = tag
+		textTagsMu.Unlock()
+		n.view.Send(objc.Sel("setDelegate:"), target)
 	case TextView:
 		// Not an NSControl: only an NSText change notification, keyed by object.
 		textTagsMu.Lock()
@@ -584,8 +661,11 @@ func (n *nativeControl) doubleValue() float64 {
 	// A table has no value of its own; what a caller wants from it is which
 	// row is chosen, and -1 when none is. That rides Double rather than a
 	// method of its own so a list binds through the same seam as a slider.
-	if n.kind == TableView {
+	if n.kind == TableView || n.kind == GridView {
 		return float64(objc.Send[int](n.value, objc.Sel("selectedRow")))
+	}
+	if n.kind == TabView {
+		return n.tabSelected()
 	}
 	return objc.Send[float64](n.view, objc.Sel("doubleValue"))
 }
@@ -595,6 +675,14 @@ func (n *nativeControl) setDouble(v float64) {
 		n.selectRow(int(v))
 		return
 	}
+	if n.kind == GridView {
+		n.selectGridRow(int(v))
+		return
+	}
+	if n.kind == TabView {
+		n.selectTab(int(v))
+		return
+	}
 	n.view.Send(objc.Sel("setDoubleValue:"), v)
 }
 
@@ -602,6 +690,7 @@ func (n *nativeControl) setDouble(v float64) {
 // DatePicker's retained formatter is released too.
 func (n *nativeControl) release() {
 	n.dropMenu()
+	n.releaseCollections()
 	if n.kind == TableView {
 		tableRowsMu.Lock()
 		delete(tableRows, uintptr(n.value))
@@ -636,6 +725,8 @@ func (n *nativeControl) boolValue() bool {
 // time it draws, what row 12 contains.
 func (n *nativeControl) setItems(items []string) {
 	switch n.kind {
+	case TabView:
+		n.setTabItems(items)
 	case TableView:
 		tableRowsMu.Lock()
 		tableRows[uintptr(n.value)] = append([]string(nil), items...)
@@ -841,6 +932,8 @@ func (n *nativeControl) stringValue() string {
 		return objc.GoString(n.view.Send(objc.Sel("labelForSegment:"), idx))
 	case TextView:
 		return objc.GoString(n.value.Send(objc.Sel("string")))
+	case OutlineView:
+		return n.outlineSelectedPath()
 	case LinkButton:
 		return objc.GoString(n.view.Send(objc.Sel("title")))
 	case DatePicker:
@@ -891,6 +984,8 @@ func (n *nativeControl) setStringValue(s string) {
 		}
 	case TextView:
 		n.value.Send(objc.Sel("setString:"), objc.NSString(s))
+	case OutlineView:
+		n.outlineSelectPath(s)
 	case LinkButton:
 		n.view.Send(objc.Sel("setTitle:"), objc.NSString(s))
 	case DatePicker:
