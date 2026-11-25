@@ -63,6 +63,9 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	liveErr = runLiveSmoke()
+	if liveErr == nil {
+		liveErr = runLiveCollections()
+	}
 	os.Exit(m.Run())
 }
 

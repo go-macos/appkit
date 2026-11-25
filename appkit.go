@@ -120,6 +120,15 @@ const (
 	// AppKit asks how many rows there are and what is in each, so this package
 	// answers those two questions from the items it was given.
 	TableView
+	// GridView is a multi-column NSTableView with a header, in virtual mode: see
+	// [NewGridView]. Its chosen row is [Control.Double].
+	GridView
+	// OutlineView is an NSOutlineView: see [NewOutlineView]. Its chosen node is
+	// [Control.StringValue], a dotted path of child indices.
+	OutlineView
+	// TabView is an NSTabView of empty pages: see [NewTabView]. Its chosen tab is
+	// [Control.Double].
+	TabView
 
 	// kindCount bounds validation. Keep it last.
 	kindCount
@@ -170,6 +179,12 @@ func (k Kind) String() string {
 		return "TableView"
 	case ClipView:
 		return "ClipView"
+	case GridView:
+		return "GridView"
+	case OutlineView:
+		return "OutlineView"
+	case TabView:
+		return "TabView"
 	default:
 		return fmt.Sprintf("Kind(%d)", int(k))
 	}
@@ -199,6 +214,12 @@ type Spec struct {
 	// Min). Min must be < Max. Value is clamped into the range. Ignored
 	// otherwise.
 	Min, Max, Value float64
+
+	// Columns and Rows are the headers and cells of a GridView; Tree the nodes of
+	// an OutlineView. A TabView's titles are Items.
+	Columns []string
+	Rows    [][]string
+	Tree    []TreeItem
 }
 
 func (s Spec) validate() error {
