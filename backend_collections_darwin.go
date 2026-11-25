@@ -8,7 +8,6 @@ package appkit
 
 import (
 	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/go-macos/objc"
@@ -23,19 +22,17 @@ type gridState struct {
 	colIdx map[objc.ID]int // NSTableColumn -> column index
 }
 
-// onode is one outline node, flattened: an NSOutlineView item is an NSNumber
-// holding the node's index in nodes.
-type onode struct {
-	title    string
-	expanded bool
-	children []int
-	path     string
+type outlineState struct {
+	outlineModel
+	items []objc.ID // retained NSNumber per node; NSOutlineView does not retain items
 }
 
-type outlineState struct {
-	nodes []onode
-	roots []int
-	items []objc.ID // retained NSNumber per node; NSOutlineView does not retain items
+// itemIndex is the node an outline item names; the root item, nil, is -1.
+func itemIndex(item objc.ID) int {
+	if item == 0 {
+		return -1
+	}
+	return objc.Send[int](item, objc.Sel("integerValue"))
 }
 
 var (
@@ -66,10 +63,10 @@ func outlineOf(ov objc.ID) *outlineState {
 // gridCell is the text of one cell; an out-of-range ask answers empty.
 func gridCell(g *gridState, col objc.ID, row int) string {
 	c, ok := g.colIdx[col]
-	if !ok || row < 0 || row >= len(g.rows) || c >= len(g.rows[row]) {
-		return ""
+	if !ok {
+		c = -1
 	}
-	return g.rows[row][c]
+	return cellAt(g.rows, c, row)
 }
 
 func quietly(fn func()) {
@@ -154,23 +151,7 @@ func makeOutlineView(nodes []TreeItem) (sv, ov objc.ID) {
 
 // flattenTree fills st from nodes and retains one NSNumber item per node.
 func flattenTree(st *outlineState, nodes []TreeItem) {
-	var add func(ns []TreeItem, prefix string) []int
-	add = func(ns []TreeItem, prefix string) []int {
-		idx := make([]int, 0, len(ns))
-		for i, n := range ns {
-			p := strconv.Itoa(i)
-			if prefix != "" {
-				p = prefix + "." + p
-			}
-			at := len(st.nodes)
-			st.nodes = append(st.nodes, onode{title: n.Title, expanded: n.Expanded, path: p})
-			kids := add(n.Children, p)
-			st.nodes[at].children = kids
-			idx = append(idx, at)
-		}
-		return idx
-	}
-	st.roots = add(nodes, "")
+	st.outlineModel = flattenModel(nodes)
 	st.items = make([]objc.ID, len(st.nodes))
 	for i := range st.nodes {
 		it := objc.ClassID("NSNumber").Send(objc.Sel("numberWithInteger:"), i)
@@ -184,18 +165,6 @@ func (st *outlineState) releaseItems() {
 		it.Send(objc.Sel("release"))
 	}
 	st.items = nil
-}
-
-// kids is the child list an outline item names; item 0 is the root.
-func (st *outlineState) kids(item objc.ID) []int {
-	if item == 0 {
-		return st.roots
-	}
-	i := objc.Send[int](item, objc.Sel("integerValue"))
-	if i < 0 || i >= len(st.nodes) {
-		return nil
-	}
-	return st.nodes[i].children
 }
 
 // outlineExpand opens the nodes that asked to be open, parents first.
@@ -230,9 +199,6 @@ func fillTabs(tv objc.ID, titles []string) {
 
 func (n *nativeControl) setGrid(cols []string, rows [][]string) {
 	g := gridOf(n.value)
-	if g == nil {
-		return
-	}
 	if len(cols) != len(g.cols) || !equalStrings(cols, g.cols) {
 		// A different set of columns is a different control: rebuild them.
 		existing := n.value.Send(objc.Sel("tableColumns"))
@@ -267,9 +233,6 @@ func (n *nativeControl) setGrid(cols []string, rows [][]string) {
 
 func (n *nativeControl) setTree(nodes []TreeItem) {
 	st := outlineOf(n.value)
-	if st == nil {
-		return
-	}
 	old := *st
 	fresh := &outlineState{}
 	flattenTree(fresh, nodes)
@@ -287,18 +250,8 @@ func (n *nativeControl) setTree(nodes []TreeItem) {
 func (n *nativeControl) outlineSelectedPath() string {
 	st := outlineOf(n.value)
 	row := objc.Send[int](n.value, objc.Sel("selectedRow"))
-	if st == nil || row < 0 {
-		return ""
-	}
-	item := n.value.Send(objc.Sel("itemAtRow:"), row)
-	if item == 0 {
-		return ""
-	}
-	i := objc.Send[int](item, objc.Sel("integerValue"))
-	if i < 0 || i >= len(st.nodes) {
-		return ""
-	}
-	return st.nodes[i].path
+	// itemAtRow: answers nil for -1, and itemIndex(nil) is -1, which names none.
+	return st.path(itemIndex(n.value.Send(objc.Sel("itemAtRow:"), row)))
 }
 
 // outlineSelectPath chooses the node a path names, opening its ancestors, or
@@ -306,45 +259,20 @@ func (n *nativeControl) outlineSelectedPath() string {
 func (n *nativeControl) outlineSelectPath(p string) {
 	st := outlineOf(n.value)
 	quietly(func() {
-		if st == nil || p == "" {
+		chain, ok := st.resolve(p)
+		if !ok {
 			n.value.Send(objc.Sel("deselectAll:"), objc.ID(0))
 			return
 		}
-		level := st.roots
-		at := -1
-		for _, part := range strings.Split(p, ".") {
-			k, err := strconv.Atoi(part)
-			if err != nil || k < 0 || k >= len(level) {
-				n.value.Send(objc.Sel("deselectAll:"), objc.ID(0))
-				return
-			}
-			if at >= 0 {
-				n.value.Send(objc.Sel("expandItem:"), st.items[at])
-			}
-			at = level[k]
-			level = st.nodes[at].children
+		for _, anc := range chain[:len(chain)-1] {
+			n.value.Send(objc.Sel("expandItem:"), st.items[anc])
 		}
-		row := objc.Send[int](n.value, objc.Sel("rowForItem:"), st.items[at])
-		if row < 0 {
-			n.value.Send(objc.Sel("deselectAll:"), objc.ID(0))
-			return
-		}
+		// Every ancestor is open now, so the node has a row.
+		row := objc.Send[int](n.value, objc.Sel("rowForItem:"), st.items[chain[len(chain)-1]])
 		set := objc.ClassID("NSIndexSet").Send(objc.Sel("indexSetWithIndex:"), row)
 		n.value.Send(objc.Sel("selectRowIndexes:byExtendingSelection:"), set, false)
 		n.value.Send(objc.Sel("scrollRowToVisible:"), row)
 	})
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // selectGridRow chooses a row of a grid, or clears the selection for a row
@@ -352,7 +280,7 @@ func equalStrings(a, b []string) bool {
 func (n *nativeControl) selectGridRow(row int) {
 	g := gridOf(n.value)
 	quietly(func() {
-		if g == nil || row < 0 || row >= len(g.rows) {
+		if row < 0 || row >= len(g.rows) {
 			n.value.Send(objc.Sel("deselectAll:"), objc.ID(0))
 			return
 		}

@@ -97,47 +97,33 @@ var (
 				{
 					Cmd: objc.Sel("outlineView:numberOfChildrenOfItem:"),
 					Fn: func(_ objc.ID, _ objc.SEL, ov, item objc.ID) int {
-						if st := outlineOf(ov); st != nil {
-							return len(st.kids(item))
-						}
-						return 0
+						st := outlineOf(ov)
+						return len(st.kids(itemIndex(item)))
 					},
 				},
 				{
 					Cmd: objc.Sel("outlineView:child:ofItem:"),
 					Fn: func(_ objc.ID, _ objc.SEL, ov objc.ID, index int, item objc.ID) objc.ID {
 						st := outlineOf(ov)
-						if st == nil {
+						c, ok := st.child(itemIndex(item), index)
+						if !ok {
 							return 0
 						}
-						k := st.kids(item)
-						if index < 0 || index >= len(k) {
-							return 0
-						}
-						return st.items[k[index]]
+						return st.items[c]
 					},
 				},
 				{
 					Cmd: objc.Sel("outlineView:isItemExpandable:"),
 					Fn: func(_ objc.ID, _ objc.SEL, ov, item objc.ID) bool {
-						if st := outlineOf(ov); st != nil {
-							return len(st.kids(item)) > 0
-						}
-						return false
+						st := outlineOf(ov)
+						return len(st.kids(itemIndex(item))) > 0
 					},
 				},
 				{
 					Cmd: objc.Sel("outlineView:objectValueForTableColumn:byItem:"),
 					Fn: func(_ objc.ID, _ objc.SEL, ov, _, item objc.ID) objc.ID {
 						st := outlineOf(ov)
-						if st == nil || item == 0 {
-							return objc.NSString("")
-						}
-						i := objc.Send[int](item, objc.Sel("integerValue"))
-						if i < 0 || i >= len(st.nodes) {
-							return objc.NSString("")
-						}
-						return objc.NSString(st.nodes[i].title)
+						return objc.NSString(st.title(itemIndex(item)))
 					},
 				},
 				{
