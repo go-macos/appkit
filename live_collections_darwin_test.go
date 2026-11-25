@@ -277,7 +277,7 @@ func liveCollectionEdges(g, o, t *Control) error {
 func keepsGoing(fn func() error) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("panicked: %v", r)
+			err = fmt.Errorf("read out of bounds: %v", r)
 		}
 	}()
 	return fn()

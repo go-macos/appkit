@@ -22,7 +22,7 @@ func calm(t *testing.T, what string, fn func()) {
 	t.Helper()
 	defer func() {
 		if r := recover(); r != nil {
-			t.Errorf("%s panicked: %v", what, r)
+			t.Errorf("%s read out of bounds: %v", what, r)
 		}
 	}()
 	fn()
@@ -62,9 +62,11 @@ func TestOutlineModelLookups(t *testing.T) {
 	if got := m.kids(0); !reflect.DeepEqual(got, []int{1, 2}) {
 		t.Errorf("kids(0) = %v", got)
 	}
-	if got := m.kids(len(m.nodes)); got != nil {
-		t.Errorf("kids past the end = %v", got)
-	}
+	calm(t, "kids past the end", func() {
+		if got := m.kids(len(m.nodes)); got != nil {
+			t.Errorf("kids past the end = %v", got)
+		}
+	})
 	if got := m.kids(len(m.nodes) - 1); len(got) != 0 {
 		t.Errorf("a leaf has kids %v", got)
 	}
