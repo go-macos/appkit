@@ -90,10 +90,7 @@ func (m *outlineModel) path(i int) string {
 // resolve turns a dotted path into the node indexes from a root down to the
 // node it names; ok is false for "" and for a path that names no node.
 func (m *outlineModel) resolve(p string) (chain []int, ok bool) {
-	if p == "" {
-		return nil, false
-	}
-	level := m.roots
+	level := m.roots // "" splits to one empty part, which Atoi refuses
 	for _, part := range strings.Split(p, ".") {
 		k, err := strconv.Atoi(part)
 		if err != nil || k < 0 || k >= len(level) {

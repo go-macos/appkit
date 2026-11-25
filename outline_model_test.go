@@ -16,6 +16,18 @@ func sampleTree() []TreeItem {
 	}
 }
 
+// calm runs fn and reports a panic as a test failure, so a guard that is gone
+// fails by assertion, not by crashing the binary.
+func calm(t *testing.T, what string, fn func()) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("%s panicked: %v", what, r)
+		}
+	}()
+	fn()
+}
+
 func TestFlattenModel(t *testing.T) {
 	m := flattenModel(sampleTree())
 	if !reflect.DeepEqual(m.roots, []int{0, 4}) {
@@ -34,6 +46,16 @@ func TestFlattenModel(t *testing.T) {
 
 func TestOutlineModelLookups(t *testing.T) {
 	m := flattenModel(sampleTree())
+	calm(t, "lookups past the ends", func() {
+		m.kids(-1)
+		m.kids(len(m.nodes))
+		m.child(0, 2)
+		m.child(0, -1)
+		m.title(-1)
+		m.title(len(m.nodes))
+		m.path(-1)
+		m.path(len(m.nodes))
+	})
 	if got := m.kids(-1); !reflect.DeepEqual(got, []int{0, 4}) {
 		t.Errorf("root kids = %v", got)
 	}
@@ -73,9 +95,11 @@ func TestOutlineModelResolve(t *testing.T) {
 		t.Errorf("resolve(0.1.0) = %v,%v", chain, ok)
 	}
 	for _, bad := range []string{"", "x", "2", "-1", "0.2", "0.", "0.0.0"} {
-		if c, ok := m.resolve(bad); ok || c != nil {
-			t.Errorf("resolve(%q) = %v,%v, want none", bad, c, ok)
-		}
+		calm(t, "resolve("+bad+")", func() {
+			if c, ok := m.resolve(bad); ok || c != nil {
+				t.Errorf("resolve(%q) = %v,%v, want none", bad, c, ok)
+			}
+		})
 	}
 	if c, ok := m.resolve("1"); !ok || len(c) != 1 || c[0] != 4 {
 		t.Errorf("resolve(1) = %v,%v", c, ok)
@@ -89,9 +113,11 @@ func TestCellAt(t *testing.T) {
 		want     string
 	}{{0, 0, "a"}, {1, 0, "b"}, {0, 1, "c"}, {1, 1, ""}, {2, 0, ""}, {-1, 0, ""}, {0, -1, ""}, {0, 2, ""}}
 	for _, c := range cases {
-		if got := cellAt(rows, c.col, c.row); got != c.want {
-			t.Errorf("cellAt(%d,%d) = %q, want %q", c.col, c.row, got, c.want)
-		}
+		calm(t, "cellAt", func() {
+			if got := cellAt(rows, c.col, c.row); got != c.want {
+				t.Errorf("cellAt(%d,%d) = %q, want %q", c.col, c.row, got, c.want)
+			}
+		})
 	}
 }
 

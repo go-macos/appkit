@@ -258,8 +258,8 @@ func liveCollectionEdges(g, o, t *Control) error {
 		if err := o.SetStringValue("0"); err != nil {
 			return err
 		}
-		if err := o.SetStringValue(p); err != nil {
-			return err
+		if err := keepsGoing(func() error { return o.SetStringValue(p) }); err != nil {
+			return fmt.Errorf("SetStringValue(%q): %w", p, err)
 		}
 		want := p
 		if p == "9" || p == "0.x" || p == "" {
@@ -270,6 +270,17 @@ func liveCollectionEdges(g, o, t *Control) error {
 		}
 	}
 	return nil
+}
+
+// keepsGoing runs fn and turns a panic into an error, so a missing guard fails
+// as an assertion rather than ending the test binary.
+func keepsGoing(fn func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panicked: %v", r)
+		}
+	}()
+	return fn()
 }
 
 // withoutClass runs fn with newObject failing for one class.

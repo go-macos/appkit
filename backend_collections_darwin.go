@@ -178,10 +178,7 @@ func (n *nativeControl) outlineExpand(st *outlineState) {
 
 func makeTabView(titles []string) objc.ID {
 	tv := newObject("NSTabView")
-	if tv == 0 {
-		return 0
-	}
-	fillTabs(tv, titles)
+	fillTabs(tv, titles) // messages to nil are no-ops; the nil view is returned as the failure
 	return tv
 }
 
